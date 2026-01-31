@@ -1,12 +1,11 @@
 -- See discussion in https://github.com/xournalpp/xournalpp/issues/7007
 
 -- TODO:
--- - Test patch in https://github.com/xournalpp/xournalpp/issues/7007
 -- - Allow multiple users same copy
--- - Allow list of students to export with a fixed order
--- - Configure locale numbers 1.5 vs 1,5
+-- - Go backward
 
 local PREFIX_NAME = "*:"
+local PREFIX_REF_STUDENTS = "*students:"
 local SEP_NAME = "__" -- TODO: rather use | and TAB (allow both)
 local GRADE_SEP = "=>"
 local CSV_SEP = "\t"
@@ -24,6 +23,10 @@ function dump(o)
    end
 end
 
+function trim(x)
+   return x:match("^%s*(.-)%s*$")
+end
+
 function split(s, delimiter)
     result = {};
     delimiter_regexp = delimiter:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%0")
@@ -33,6 +36,24 @@ function split(s, delimiter)
     return result;
 end
 
+
+-- We allow SEP_NAME and TAB to separate names
+-- We don't have "OR" in pattern matching
+-- https://stackoverflow.com/questions/3462370/logical-or-in-lua-patterns
+-- https://www.lua.org/manual/5.5/manual.html#6.5.1
+-- so to do "SEP_NAME or TAB", we first cut on SEP_NAME, then TAB, and we also strip
+-- white space
+function split_student_name_in_columns(student)
+   local res = {}
+   for _,x in ipairs(split(student, SEP_NAME)) do
+      for _,y in ipairs(split(x, "\t")) do
+         table.insert(res, trim(y))
+      end
+   end
+   return res
+end
+
+
 local function int_to_spreadsheet_col(n)
     local s = ""
     while n > 0 do
@@ -41,6 +62,86 @@ local function int_to_spreadsheet_col(n)
         n = math.floor(n / 26)
     end
     return s
+end
+
+-- https://stackoverflow.com/questions/19326368/iterate-over-lines-including-blank-lines
+function iterate_on_lines(s)
+        if s:sub(-1)~="\n" then s=s.."\n" end
+        return s:gmatch("(.-)\n")
+end
+
+-- https://stackoverflow.com/questions/50459102/replace-accented-characters-in-string-to-standard-with-lua
+function normalizeLatin(str)
+  local tableAccents = {}
+    tableAccents["À"] = "A"
+    tableAccents["Á"] = "A"
+    tableAccents["Â"] = "A"
+    tableAccents["Ã"] = "A"
+    tableAccents["Ä"] = "A"
+    tableAccents["Å"] = "A"
+    tableAccents["Æ"] = "AE"
+    tableAccents["Ç"] = "C"
+    tableAccents["È"] = "E"
+    tableAccents["É"] = "E"
+    tableAccents["Ê"] = "E"
+    tableAccents["Ë"] = "E"
+    tableAccents["Ì"] = "I"
+    tableAccents["Í"] = "I"
+    tableAccents["Î"] = "I"
+    tableAccents["Ï"] = "I"
+    tableAccents["Ð"] = "D"
+    tableAccents["Ñ"] = "N"
+    tableAccents["Ò"] = "O"
+    tableAccents["Ó"] = "O"
+    tableAccents["Ô"] = "O"
+    tableAccents["Õ"] = "O"
+    tableAccents["Ö"] = "O"
+    tableAccents["Ø"] = "O"
+    tableAccents["Ù"] = "U"
+    tableAccents["Ú"] = "U"
+    tableAccents["Û"] = "U"
+    tableAccents["Ü"] = "U"
+    tableAccents["Ý"] = "Y"
+    tableAccents["Þ"] = "P"
+    tableAccents["ß"] = "s"
+    tableAccents["à"] = "a"
+    tableAccents["á"] = "a"
+    tableAccents["â"] = "a"
+    tableAccents["ã"] = "a"
+    tableAccents["ä"] = "a"
+    tableAccents["å"] = "a"
+    tableAccents["æ"] = "ae"
+    tableAccents["ç"] = "c"
+    tableAccents["è"] = "e"
+    tableAccents["é"] = "e"
+    tableAccents["ê"] = "e"
+    tableAccents["ë"] = "e"
+    tableAccents["ì"] = "i"
+    tableAccents["í"] = "i"
+    tableAccents["î"] = "i"
+    tableAccents["ï"] = "i"
+    tableAccents["ð"] = "eth"
+    tableAccents["ñ"] = "n"
+    tableAccents["ò"] = "o"
+    tableAccents["ó"] = "o"
+    tableAccents["ô"] = "o"
+    tableAccents["õ"] = "o"
+    tableAccents["ö"] = "o"
+    tableAccents["ø"] = "o"
+    tableAccents["ù"] = "u"
+    tableAccents["ú"] = "u"
+    tableAccents["û"] = "u"
+    tableAccents["ü"] = "u"
+    tableAccents["ý"] = "y"
+    tableAccents["þ"] = "p"
+    tableAccents["ÿ"] = "y"
+
+  local normalisedString = ''
+
+  local normalisedString = str: gsub("[%z\1-\127\194-\244][\128-\191]*", tableAccents)
+
+  return normalisedString
+
 end
 
 -- Register all Toolbar actions and intialize all UI stuff
@@ -206,6 +307,7 @@ function generateCSV(mode)
    -- If no student, it is the bareme, other grades may be expressible as a percentage of this value
    local bareme = "Max points"
    local currentStudent = bareme
+   local tmpCurrentStudent = bareme
    -- We gather all questions by order of appearance
    local questionNamesHash = {} -- check efficiently if question already added
    -- show questions in the order they appear on the first copy (you may add an empty page first with all questions for a "bareme"
@@ -214,15 +316,18 @@ function generateCSV(mode)
    -- Same for students
    local studentHash = {}
    local studentArray = {}
-   -- Optionally, if we add in the first bareme pages a list of students called like
-   -- *students: followed by students, one per line, then we will try to write the grades
-   -- in this order (if a student appears in the reference but has no grade, an empty line
-   -- will be added with the reference name). When a match is found, the reference name
-   -- is kept. To find matches, since it is easy to make a mistake in a name, we read
-   -- the name of the student currently graded, if an entry exactly match its name we pick it
-   -- otherwise we separate it based on SEP_NAME, try to match
-   -- the first column, if there is not exactly one match we try with the second etc.
-   local referenceStudents = nil -- When present, this is simply a list of student names
+   -- Optionally, if we add at the beginning of the document a list (or multiple lists)
+   -- of students called like *students: followed by a new line and
+   -- students, one per line, then we will try to write the grades in
+   -- this order (if a student appears in the reference but has no
+   -- grade, an empty line will be added with the reference
+   -- name). When a match is found, the reference name is kept. To
+   -- find matches, since it is easy to make a mistake in a name, we
+   -- read the name of the student currently graded, if an entry
+   -- exactly match its name we pick it otherwise we separate it based
+   -- on SEP_NAME, try to match the first column, if there is not
+   -- exactly one match we try with the second etc.
+   local referenceStudentsHash = {} -- This is simply a map "reference student name" -> true
    -- In mode percent_formula, we want a bareme
    if mode == percent_formula then
       allGrades[bareme] = {}
@@ -231,10 +336,61 @@ function generateCSV(mode)
    end
    -- We explore all pages of the document
    for _, currText in ipairs(allTexts) do
+      -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
+      if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
+         for currLine in iterate_on_lines(currText.text) do
+            if currLine ~= PREFIX_REF_STUDENTS then
+               referenceStudentsHash[currLine] = true
+               allGrades[currLine] = allGrades[currLine] or {}
+               if studentHash[currLine] == nil then
+                  studentHash[currLine] = 1 -- Use it like a set based on a hash table
+                  table.insert(studentArray,currLine)
+               end
+            end
+         end
+      end 
       -- Try to check if new student (=starts with PREFIX_NAME)
       if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
-         currentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
-         allGrades[currentStudent] = {}
+         -- We try to see if we find him in the list of reference students
+         -- so we give him a temporary name until we know if it is in the list
+         currentStudent = nil
+         tmpCurrentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
+         if referenceStudentsHash[tmpCurrentStudent] then
+            currentStudent = tmpCurrentStudent
+         else
+            -- We split the name and see if it the first or second etc column have
+            -- exactly one match
+            student_cols = split_student_name_in_columns(tmpCurrentStudent)
+            local msg = nil
+            for _,c in ipairs(student_cols) do
+               local matches = {}
+               local best_match_for_col = nil
+               for student,_ in pairs(referenceStudentsHash) do
+                  if string.find(normalizeLatin(student):lower(), normalizeLatin(c):lower()) then
+                     table.insert(matches, student)
+                     best_match_for_col = student
+                  end
+               end
+               if #matches == 1 then
+                  currentStudent = best_match_for_col
+                  break
+               elseif #matches > 1 then
+                  msg = "WARNING: found multiple matches for student " .. tmpCurrentStudent .. " (" .. c .. "):"
+                  for _,name in ipairs(matches) do
+                     msg = msg .. "\n- " .. name
+                  end
+               end
+            end
+            -- We found no good match
+            if currentStudent == nil then
+               currentStudent = tmpCurrentStudent
+               if msg then
+                  print(msg)
+                  app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+               end
+            end
+         end
+         allGrades[currentStudent] = allGrades[currentStudent] or {}
          if studentHash[currentStudent] == nil then
             studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
             table.insert(studentArray,currentStudent)
@@ -244,11 +400,20 @@ function generateCSV(mode)
       local res = string.find(currText.text, GRADE_SEP)
       if res ~= nil then
          -- We trim white spaces
-         local question = (string.sub(currText.text, 1, res-1)):match("^%s*(.-)%s*$")
-         local points = (string.sub(currText.text, res + #GRADE_SEP, -1)):match("^%s*(.-)%s*$")
+         local question = trim(string.sub(currText.text, 1, res-1))
+         local points = trim(string.sub(currText.text, res + #GRADE_SEP, -1))
          -- Create "Max points" if needed
          if allGrades[currentStudent] == nil then
             allGrades[currentStudent] = {}
+         end
+         if allGrades[currentStudent][question] then
+            local msg = "WARNING: the student " .. currentStudent
+            if tmpCurrentStudent ~= currentStudent then
+               msg = msg .. " (aka " .. tmpCurrentStudent .. ")"
+            end
+            msg = msg .. " has question '" .. question .. "' specified twice.\n"
+            print(msg)
+            app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
          end
          allGrades[currentStudent][question] = points
          -- Maintain proper ordering
@@ -270,8 +435,7 @@ function generateCSV(mode)
    local nb_cols = 1
    local SEP_NAME_REGEXP = SEP_NAME:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%0")
    for i=1,#studentArray do
-      local _, count = string.gsub(studentArray[i], SEP_NAME_REGEXP, "")
-      nb_cols = math.max(nb_cols, count+1)
+      nb_cols = math.max(nb_cols, #student_cols+1)
    end
    -- We print the grade names
    file:write("Questions")
@@ -288,7 +452,7 @@ function generateCSV(mode)
       local student = studentArray[i]
       -- We cut student into multiple columns (ID, name…) if necessary
       local c = 0
-      local student_cols = split(student, SEP_NAME)
+      local student_cols = split_student_name_in_columns(student)
       for c=1,nb_cols do
          if c > 1 then
             file:write(CSV_SEP)
@@ -312,6 +476,12 @@ function generateCSV(mode)
       file:write('\n')
    end
    file:close()
+   local msg = "The CSV file has been saved in " .. csv .. ". Make sure to import it with the English locale in Libre Office Calc or numbers with decimals won't be imported properly."
+   if mode == percent_formula then
+      msg = msg .. " Also make sure to import the CSV with 'Evaluate formulas' or the formulas will not be evaluated."
+   end
+   print(msg .. '\n')
+   app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
    -- logfile:close()
 end
 
