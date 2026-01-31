@@ -3,6 +3,7 @@
 -- TODO:
 -- - Allow multiple users same copy
 -- - Go backward
+-- - Add names with suggestion based on reference list
 
 local PREFIX_NAME = "*:"
 local PREFIX_REF_STUDENTS = "*students:"
@@ -399,31 +400,37 @@ function generateCSV(mode)
       -- Then we check for new grades (they look like "1.2 ~> 100" depending on separator)
       local res = string.find(currText.text, GRADE_SEP)
       if res ~= nil then
-         -- We trim white spaces
-         local question = trim(string.sub(currText.text, 1, res-1))
-         local points = trim(string.sub(currText.text, res + #GRADE_SEP, -1))
-         -- Create "Max points" if needed
-         if allGrades[currentStudent] == nil then
-            allGrades[currentStudent] = {}
-         end
-         if allGrades[currentStudent][question] then
-            local msg = "WARNING: the student " .. currentStudent
-            if tmpCurrentStudent ~= currentStudent then
-               msg = msg .. " (aka " .. tmpCurrentStudent .. ")"
+         -- We allow multiple grades separated by newlines
+         for line in iterate_on_lines(currText.text) do
+            local res = string.find(line, GRADE_SEP)
+            if res ~= nil then
+               -- We trim white spaces
+               local question = trim(string.sub(line, 1, res-1))
+               local points = trim(string.sub(line, res + #GRADE_SEP, -1))
+               -- Create "Max points" if needed
+               if allGrades[currentStudent] == nil then
+                  allGrades[currentStudent] = {}
+               end
+               if allGrades[currentStudent][question] then
+                  local msg = "WARNING: the student " .. currentStudent
+                  if tmpCurrentStudent ~= currentStudent then
+                     msg = msg .. " (aka " .. tmpCurrentStudent .. ")"
+                  end
+                  msg = msg .. " has question '" .. question .. "' specified twice.\n"
+                  print(msg)
+                  app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+               end
+               allGrades[currentStudent][question] = points
+               -- Maintain proper ordering
+               if questionNamesHash[question] == nil then
+                  questionNamesHash[question] = 1 -- Use it like a set based on a hash table
+                  table.insert(questionNamesArray,question)
+               end
+               if studentHash[currentStudent] == nil then
+                  studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
+                  table.insert(studentArray,currentStudent)
+               end
             end
-            msg = msg .. " has question '" .. question .. "' specified twice.\n"
-            print(msg)
-            app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
-         end
-         allGrades[currentStudent][question] = points
-         -- Maintain proper ordering
-         if questionNamesHash[question] == nil then
-            questionNamesHash[question] = 1 -- Use it like a set based on a hash table
-            table.insert(questionNamesArray,question)
-         end
-         if studentHash[currentStudent] == nil then
-            studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
-            table.insert(studentArray,currentStudent)
          end
       end
    end
