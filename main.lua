@@ -4,12 +4,22 @@
 -- - Allow multiple users same copy
 -- - Go backward
 -- - Add names with suggestion based on reference list
+-- - Export into separated files
 
 local PREFIX_NAME = "*:"
 local PREFIX_REF_STUDENTS = "*students:"
 local SEP_NAME = "__" -- TODO: rather use | and TAB (allow both)
 local GRADE_SEP = "=>"
 local CSV_SEP = "\t"
+
+-- Settings car be configured via a text like:
+-- *settings:
+-- optionA = foo
+-- optionB = bar
+--
+-- The list of options is:
+-- - removeNoGradeCells = false/true (default true)
+local PREFIX_SETTING = "*settings:"
 
 function dump(o)
    if type(o) == 'table' then
@@ -23,6 +33,18 @@ function dump(o)
       return tostring(o)
    end
 end
+
+function get_file_name(file)
+      return file:match("[^/\\]*$")
+end
+
+
+function tablelength(T)
+  local count = 0
+  for _ in pairs(T) do count = count + 1 end
+  return count
+end
+
 
 function trim(x)
    return x:match("^%s*(.-)%s*$")
@@ -153,6 +175,7 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: last grade", ["callback"] = "gotoLastGrade"});
   app.registerUi({["menu"] = "GradeExam: CSV", ["callback"] = "generateCSV", mode = 1});
   app.registerUi({["menu"] = "GradeExam: CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
+  app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
   app.registerUi({["menu"] = "GradeExam: debug", ["callback"] = "debug"});
 -- ADD MORE CODE, IF NEEDED
 end
@@ -162,6 +185,14 @@ function getAllTexts()
    -- we fallback to a dirty loop and print a warning
    local status, err_or_res = pcall(function () return app.getTexts("all") end)
    if status then
+      -- If multiple grades are on the same page, make sure to read them from top to bottom
+      table.sort(err_or_res, function(a, b)
+                    if a.page == b.page then
+                       return a.y < b.y
+                    else
+                       return a.page < b.page
+                    end
+      end)
       return err_or_res
    else
       local msg = "WARNING: we are falling back to a really inefficient solution because your installed xournalpp is too old. You should upgrade or be ready to wait maybe 30s on large documents."
@@ -185,9 +216,80 @@ function getAllTexts()
             end
          end
       end
+      -- If multiple grades are on the same page, make sure to read them from top to bottom
+      table.sort(texts, function(a, b)
+                    if a.page == b.page then
+                       return a.y < b.y
+                    else
+                       return a.page < b.page
+                    end
+      end)
       return texts
    end
 end
+
+-- Like getAllTexts but only gets stuff in preamble, and does it more efficiently in old xournal
+function getAllTextsInPreamble()
+   -- This function only exists in a pull request of mine for now, if it does not exist
+   -- we fallback to a dirty loop and print a warning
+   local status, err_or_res = pcall(function () return app.getTexts("all") end)
+   local res = {}
+   local resCurrentPage = {} -- Maybe names appear after a grade... unlikely but who knows
+   local currentPage = 1
+   if status then
+      for _,currText in ipairs(err_or_res) do
+         -- Try to check if new student (=starts with PREFIX_NAME)
+         if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
+            break
+         elseif currText.page == currentPage then
+            table.insert(resCurrentPage, currText)
+         else
+            -- we merge the current page back
+            for _,v in ipairs(resCurrentPage) do
+               table.insert(res, v)
+            end
+            resCurrentPage = { currText }
+            currentPage = currText.page
+         end
+      end
+      return res
+   else
+      local msg = "WARNING: we are falling back to a really inefficient solution because your installed xournalpp is too old. You should upgrade or be ready to wait maybe 30s on large documents."
+      print(msg)
+      app.openDialog(msg, {"Continue"}, nil) -- This is not blocking, use callbacks otherwise
+      local index = 1
+      local docStructure = app.getDocumentStructure()
+      local numPages = #docStructure.pages
+      for i=1, numPages do
+         app.setCurrentPage(i)
+         local numLayers = #docStructure.pages[i].layers
+         for j=1, numLayers do
+            app.setCurrentLayer(j)
+            local textsOnLayer = app.getTexts("layer")
+            for k=1, #textsOnLayer do
+               textsOnLayer[k].page = i
+               textsOnLayer[k].layer = j
+               index = index + 1
+               -- Try to check if new student (=starts with PREFIX_NAME)
+               if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
+                  return res
+               elseif textsOnLayer[k].page == currentPage then
+                  table.insert(resCurrentPage, textsOnLayer[k])
+               else
+                  -- we merge the current page back
+                  for _,v in ipairs(resCurrentPage) do
+                     table.insert(res, v)
+                  end
+                  resCurrentPage = { textsOnLayer[k] }
+                  currentPage = textsOnLayer[k].page
+               end
+            end
+         end
+      end
+      return texts
+   end
+end
+
 -- Goto the next student, and return -1 if no student is found and the page otherwise
 function gotoNextStudent()
    -- We go to the last question
@@ -288,19 +390,15 @@ end
 -- mode = 2 is write a percent formula based on the max grade
 function generateCSV(mode)
    local percent_formula = 2 -- alias for the mode 2, easier to read
+   local warning_messages = {} -- Messages to display when finding unusual things
    -- We start to gather all texts
    local allTexts = getAllTexts()
-   -- If multiple grades are on the same page, make sure to read them from top to bottom
-   table.sort(allTexts, function(a, b)
-                 if a.page == b.page then
-                    return a.y < b.y
-                 else
-                    return a.page < b.page
-                 end
-   end)
+   -- Stores the settings configured via PREFIX_SETTING
+   local settings = {
+      removeNoGradeCells = "false", -- If "true", the cells with "no grade" will actually be empty
+   }
    -- Not sure why, but print does not work with latest version (appimage), so let's
    -- debug by writing in a file
-   -- logfile = io.open("debug.txt", "w")
    local docStructure = app.getDocumentStructure()
    local numPages = #docStructure.pages
    -- allGrades[student][grade] = value;
@@ -309,6 +407,8 @@ function generateCSV(mode)
    local bareme = "Max points"
    local currentStudent = bareme
    local tmpCurrentStudent = bareme
+   local stillParsingBareme = true -- To know if we are already reading student stuff
+   local baremeIsPresent = false -- To know if we are already reading student stuff
    -- We gather all questions by order of appearance
    local questionNamesHash = {} -- check efficiently if question already added
    -- show questions in the order they appear on the first copy (you may add an empty page first with all questions for a "bareme"
@@ -329,14 +429,24 @@ function generateCSV(mode)
    -- on SEP_NAME, try to match the first column, if there is not
    -- exactly one match we try with the second etc.
    local referenceStudentsHash = {} -- This is simply a map "reference student name" -> true
+   local studentWithExam = {} -- To know if a student got no grade because they have no exam at all or because we forgot to grade it
    -- In mode percent_formula, we want a bareme
    if mode == percent_formula then
       allGrades[bareme] = {}
       studentHash[bareme] = 1 -- Use it like a set based on a hash table
       table.insert(studentArray,bareme)
    end
+   local lastVisitedPage = 0
+   local emptyPages = {} -- To print a warning if too many pages are empty (eg. forgot to correct one student because we forgot to write his name)
    -- We explore all pages of the document
    for _, currText in ipairs(allTexts) do
+      -- Check if we forgot to annotate some pages
+      if lastVisitedPage ~= currText.page then
+         for i=lastVisitedPage+1,currText.page-1 do
+            table.insert(emptyPages, i)
+         end
+         lastVisitedPage = currText.page
+      end
       -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
       if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
          for currLine in iterate_on_lines(currText.text) do
@@ -350,8 +460,25 @@ function generateCSV(mode)
             end
          end
       end 
+      -- Check if this is a setting (=starts with PREFIX_SETTING)
+      if string.sub(currText.text,1,#PREFIX_SETTING) == PREFIX_SETTING then
+         -- Allow multiple settings in the same box
+         for line in iterate_on_lines(currText.text) do
+            local res = string.find(line, "=")
+            if res ~= nil then
+               -- We trim white spaces
+               local param = trim(string.sub(line, 1, res-1))
+               local value = trim(string.sub(line, res + #GRADE_SEP, -1))
+               settings[param] = value
+            end
+         end
+      end
       -- Try to check if new student (=starts with PREFIX_NAME)
       if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
+         if stillParsingBareme and next(questionNamesArray) ~= nil then
+            baremeIsPresent = true
+         end
+         stillParsingBareme = false
          -- We try to see if we find him in the list of reference students
          -- so we give him a temporary name until we know if it is in the list
          currentStudent = nil
@@ -386,11 +513,13 @@ function generateCSV(mode)
             if currentStudent == nil then
                currentStudent = tmpCurrentStudent
                if msg then
-                  print(msg)
-                  app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+                  table.insert(warning_messages, msg)
+               elseif next(referenceStudentsHash) ~= nil then -- next(foo) == nil iff foo is empty
+                  table.insert(warning_messages, "WARNING: no matches found for the student " .. tmpCurrentStudent .. " in the reference list of students.")
                end
             end
          end
+         studentWithExam[currentStudent] = true
          allGrades[currentStudent] = allGrades[currentStudent] or {}
          if studentHash[currentStudent] == nil then
             studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
@@ -417,14 +546,17 @@ function generateCSV(mode)
                      msg = msg .. " (aka " .. tmpCurrentStudent .. ")"
                   end
                   msg = msg .. " has question '" .. question .. "' specified twice.\n"
-                  print(msg)
-                  app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+                  table.insert(warning_messages, msg)
                end
                allGrades[currentStudent][question] = points
                -- Maintain proper ordering
                if questionNamesHash[question] == nil then
                   questionNamesHash[question] = 1 -- Use it like a set based on a hash table
                   table.insert(questionNamesArray,question)
+                  -- Print warning if this question was not already added in the bareme
+                  if not stillParsingBareme and baremeIsPresent then
+                     table.insert(warning_messages, "WARNING: the question '" .. question .. "' is not in the list of questions in the rating scale")
+                  end
                end
                if studentHash[currentStudent] == nil then
                   studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
@@ -437,6 +569,8 @@ function generateCSV(mode)
    -- We determine the name of the file to write grades
    local csv = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades.csv"
    file = io.open(csv, "w")
+   local logs = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades_log.txt"
+   logfile = io.open(logs, "w")
    -- First, we check how many columns are configured in names, so that *:42__Alice__Foo
    -- creates 3 columns, one with the number 42, one with Alice, and one with Foo
    local nb_cols = 1
@@ -455,6 +589,8 @@ function generateCSV(mode)
    end   
    file:write("\n")
    -- We show the grades for each student
+   local missing_grades_message = ""
+   local missing_all_grades_message = ""
    for i=1,#studentArray do
       local student = studentArray[i]
       -- We cut student into multiple columns (ID, name…) if necessary
@@ -468,28 +604,66 @@ function generateCSV(mode)
             file:write(student_cols[c])
          end
       end
+      local missing_grades_current_student = ""
       for j=1,#questionNamesArray do
          file:write(CSV_SEP)
          local gr = "NO GRADE"
+         local found_grade = false
          if allGrades[student][questionNamesArray[j]] ~= nil then
             gr = allGrades[student][questionNamesArray[j]]
+            found_grade = true
+         end
+         if not found_grade then
+            missing_grades_current_student = missing_grades_current_student .. (missing_grades_current_student == "" and "" or ", ") .. questionNamesArray[j]
          end
          if mode == 1 or i == 1 then -- For the bareme no need to write it this way
-            file:write(gr)
+            if settings.removeNoGradeCells == "true" and found_grade == false then
+               -- We write nothing if no grade is given
+            else
+               file:write(gr)
+            end
          elseif mode == percent_formula then
-            file:write("=" .. gr .. "*" .. int_to_spreadsheet_col(j + nb_cols) .. "2/100")
+            if settings.removeNoGradeCells == "true" and found_grade == false then
+               -- We write nothing if no grade is given
+            else
+               file:write("=" .. gr .. "*" .. int_to_spreadsheet_col(j + nb_cols) .. "2/100")
+            end
+         end
+      end
+      if missing_grades_current_student ~= "" then
+         if studentWithExam[student] then
+            missing_grades_message = missing_grades_message .. (missing_grades_message == "" and "" or ", ") .. student .. " (" .. missing_grades_current_student .. ")"
+         else
+            missing_all_grades_message = missing_all_grades_message .. (missing_all_grades_message == "" and "" or ", ") .. student
          end
       end
       file:write('\n')
    end
+   if missing_grades_message ~= "" then
+      table.insert(warning_messages, "WARNING: the following students are missing grades for the following questions: " .. missing_grades_message)
+   end
+   if missing_all_grades_message ~= "" then
+      table.insert(warning_messages, "WARNING: we found no exam for the following students: " .. missing_all_grades_message)
+   end
    file:close()
-   local msg = "The CSV file has been saved in " .. csv .. ". Make sure to import it with the English locale in Libre Office Calc or numbers with decimals won't be imported properly."
-   if mode == percent_formula then
-      msg = msg .. " Also make sure to import the CSV with 'Evaluate formulas' or the formulas will not be evaluated."
+   if #emptyPages > 0 then
+      local msg = 'WARNING: ' .. #emptyPages .. ' pages were not annotated. Make sure you have not forgotten to grade some students (you can remove blank pages or add dummy text on blank pages to say you saw them). The list of pages with no annotation is as follows: '
+      for x,p in ipairs(emptyPages) do
+         msg = msg .. (x > 1 and ', ' or '') .. p
+      end
+      table.insert(warning_messages, msg)
+   end
+   local msg = "The CSV file (based on " .. tablelength(studentWithExam) .. " corrected exams) has been saved in " .. csv .. ". Make sure to import it with the English locale in Libre Office Calc or numbers with decimals won't be imported properly." .. (mode == percent_formula and " Also make sure to import the CSV with 'Evaluate formulas' or the formulas will not be evaluated." or "")
+   if #warning_messages > 0 then
+      msg = msg .. "\n\nDuring the production of the CSV file, we found the following warnings  (**press ENTER to dismiss this message** in case it is so long that you can\'t see the OK button, see " .. get_file_name(logs) .. " for the full logs):"
+      for _,w in ipairs(warning_messages) do
+         msg = msg .. "\n\n" .. w
+      end
    end
    print(msg .. '\n')
    app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
-   -- logfile:close()
+   logfile:write(msg)
+   logfile:close()
 end
 
 
@@ -508,4 +682,30 @@ function debug()
    -- logfile:write(dump(textsOnLayer))
    -- logfile:close()
    print(dump(getAllTexts()))
+end
+
+-- Automatically export
+
+function exportPdf()
+   local texts = getAllTexts()
+   local start = -1
+   -- TODO
+   for _,currText in ipairs(texts) do
+      -- Try to check if new student (=starts with PREFIX_NAME)
+      if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
+         
+      end
+   end
+end
+
+
+-- Automatically propose student names
+
+function isUnix()
+   return package.config:sub(1,1) == '/'
+end
+
+-- Set the student of the current page based on the reference file
+function setStudent()
+   
 end
