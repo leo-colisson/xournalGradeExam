@@ -11,7 +11,8 @@ local PREFIX_REF_STUDENTS = "*students:"
 local SEP_NAME = "__" -- TODO: rather use | and TAB (allow both)
 local GRADE_SEP = "=>"
 local CSV_SEP = "\t"
-
+local FOLDER_EXPORT = "pdf_exports"
+   
 -- Settings car be configured via a text like:
 -- *settings:
 -- optionA = foo
@@ -36,6 +37,11 @@ end
 
 function get_file_name(file)
       return file:match("[^/\\]*$")
+end
+
+
+function isUnix()
+   return package.config:sub(1,1) == '/'
 end
 
 
@@ -180,19 +186,32 @@ function initUi()
 -- ADD MORE CODE, IF NEEDED
 end
 
+function sortTexts(a,b)
+   if a.page == b.page then
+      -- We write students first, simpler to deal with later
+      local a_is_student = string.sub(a.text,1,#PREFIX_NAME) == PREFIX_NAME
+      local b_is_student = string.sub(b.text,1,#PREFIX_NAME) == PREFIX_NAME
+      if a_is_student and b_is_student then
+         return a.y < b.y
+      elseif a_is_student then
+         return true
+      elseif b_is_student then
+         return false
+      else
+         return a.y < b.y
+      end
+   else
+      return a.page < b.page
+   end
+end
+
 function getAllTexts()
    -- This function only exists in a pull request of mine for now, if it does not exist
    -- we fallback to a dirty loop and print a warning
    local status, err_or_res = pcall(function () return app.getTexts("all") end)
    if status then
       -- If multiple grades are on the same page, make sure to read them from top to bottom
-      table.sort(err_or_res, function(a, b)
-                    if a.page == b.page then
-                       return a.y < b.y
-                    else
-                       return a.page < b.page
-                    end
-      end)
+      table.sort(err_or_res, sortTexts)
       return err_or_res
    else
       local msg = "WARNING: we are falling back to a really inefficient solution because your installed xournalpp is too old. You should upgrade or be ready to wait maybe 30s on large documents."
@@ -228,32 +247,30 @@ function getAllTexts()
    end
 end
 
--- Like getAllTexts but only gets stuff in preamble, and does it more efficiently in old xournal
+function extractTextsInPreamble(allTexts)
+   local res = {}
+   for _,currText in ipairs(allTexts) do
+      -- Try to check if new student (=starts with PREFIX_NAME)
+      if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
+         break
+      else
+         table.insert(res, currText)
+      end
+   end
+   return res
+end 
+
+-- Like extractTextsInPreamble(getAllTexts()) to only gets stuff in preamble, but does it significantly more efficiently in old xournal since it stops after the preamble
 function getAllTextsInPreamble()
    -- This function only exists in a pull request of mine for now, if it does not exist
    -- we fallback to a dirty loop and print a warning
    local status, err_or_res = pcall(function () return app.getTexts("all") end)
-   local res = {}
-   local resCurrentPage = {} -- Maybe names appear after a grade... unlikely but who knows
-   local currentPage = 1
    if status then
-      for _,currText in ipairs(err_or_res) do
-         -- Try to check if new student (=starts with PREFIX_NAME)
-         if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
-            break
-         elseif currText.page == currentPage then
-            table.insert(resCurrentPage, currText)
-         else
-            -- we merge the current page back
-            for _,v in ipairs(resCurrentPage) do
-               table.insert(res, v)
-            end
-            resCurrentPage = { currText }
-            currentPage = currText.page
-         end
-      end
-      return res
+      return extractTextsInPreamble(err_or_res)
    else
+      local res = {}
+      local resCurrentPage = {} -- Maybe names appear after a grade... unlikely but who knows
+      local currentPage = 1
       local msg = "WARNING: we are falling back to a really inefficient solution because your installed xournalpp is too old. You should upgrade or be ready to wait maybe 30s on large documents."
       print(msg)
       app.openDialog(msg, {"Continue"}, nil) -- This is not blocking, use callbacks otherwise
@@ -287,6 +304,82 @@ function getAllTextsInPreamble()
          end
       end
       return texts
+   end
+end
+
+-- Extracts a hash and a table of all reference students
+function getReferenceStudents(allTextsInPreamble)
+   print("getReferenceStudents", dump(allTextsInPreamble))
+   local referenceStudentsHash = {}
+   local referenceStudentsArray = {}
+   for _, currText in ipairs(allTextsInPreamble) do
+      -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
+      if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
+         for currLine in iterate_on_lines(currText.text) do
+            if currLine ~= PREFIX_REF_STUDENTS then
+               if referenceStudentsHash[currLine] == nil then
+                  table.insert(referenceStudentsArray, currLine)
+                  referenceStudentsHash[currLine] = true
+               end
+            end
+         end
+      end
+   end
+   return referenceStudentsHash, referenceStudentsArray
+end
+
+function isStudentName(text)
+   if string.sub(text,1,#PREFIX_NAME) == PREFIX_NAME then
+      return string.sub(text,#PREFIX_NAME+1,-1)
+   else
+      return nil
+   end
+end
+
+-- findReferenceForStudent("quick typed name") returns the possibly corrected new name, a number n of matches (1 means the name has been updated) and a warning error
+function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
+   print("findReferenceForStudent")
+   print(dump(tmpCurrentStudent), dump(referenceStudentsHash))
+   local currentStudent = nil
+   if referenceStudentsHash[tmpCurrentStudent] then
+      return tmpCurrentStudent, 1, nil
+   else
+      -- We split the name and see if it the first or second etc column have
+      -- exactly one match
+      student_cols = split_student_name_in_columns(tmpCurrentStudent)
+      local msg = nil
+      local nb_matches = 0
+      for _,c in ipairs(student_cols) do
+         local matches = {}
+         local best_match_for_col = nil
+         for student,_ in pairs(referenceStudentsHash) do
+            if string.find(normalizeLatin(student):lower(), normalizeLatin(c):lower()) then
+               table.insert(matches, student)
+               best_match_for_col = student
+            end
+         end
+         if #matches == 1 then
+            currentStudent = best_match_for_col
+            nb_matches = 1
+            break
+         elseif #matches > 1 then
+            msg = "WARNING: found multiple matches for student " .. tmpCurrentStudent .. " (" .. c .. "):"
+            nb_matches = #matches
+            for _,name in ipairs(matches) do
+               msg = msg .. "\n- " .. name
+            end
+         end
+      end
+      -- We found no good match
+      if currentStudent == nil then
+         currentStudent = tmpCurrentStudent
+         if msg then
+            return currentStudent, #matches, msg
+         else
+            return currentStudent, #matches, "WARNING: no matches found for the student " .. tmpCurrentStudent .. " in the reference list of students."
+         end
+      end
+      return currentStudent, 1, nil
    end
 end
 
@@ -481,42 +574,13 @@ function generateCSV(mode)
          stillParsingBareme = false
          -- We try to see if we find him in the list of reference students
          -- so we give him a temporary name until we know if it is in the list
-         currentStudent = nil
          tmpCurrentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
-         if referenceStudentsHash[tmpCurrentStudent] then
-            currentStudent = tmpCurrentStudent
-         else
-            -- We split the name and see if it the first or second etc column have
-            -- exactly one match
-            student_cols = split_student_name_in_columns(tmpCurrentStudent)
-            local msg = nil
-            for _,c in ipairs(student_cols) do
-               local matches = {}
-               local best_match_for_col = nil
-               for student,_ in pairs(referenceStudentsHash) do
-                  if string.find(normalizeLatin(student):lower(), normalizeLatin(c):lower()) then
-                     table.insert(matches, student)
-                     best_match_for_col = student
-                  end
-               end
-               if #matches == 1 then
-                  currentStudent = best_match_for_col
-                  break
-               elseif #matches > 1 then
-                  msg = "WARNING: found multiple matches for student " .. tmpCurrentStudent .. " (" .. c .. "):"
-                  for _,name in ipairs(matches) do
-                     msg = msg .. "\n- " .. name
-                  end
-               end
-            end
-            -- We found no good match
-            if currentStudent == nil then
-               currentStudent = tmpCurrentStudent
-               if msg then
-                  table.insert(warning_messages, msg)
-               elseif next(referenceStudentsHash) ~= nil then -- next(foo) == nil iff foo is empty
-                  table.insert(warning_messages, "WARNING: no matches found for the student " .. tmpCurrentStudent .. " in the reference list of students.")
-               end
+         local tmp_name, _, errors = findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
+         currentStudent = tmp_name
+         if errors ~= nil then
+            -- We print an error only if there is a reference list, otherwise meaningless
+            if next(referenceStudentsHash) ~= nil then -- next(foo) == nil iff foo is empty
+               table.insert(warning_messages, errors)
             end
          end
          studentWithExam[currentStudent] = true
@@ -686,24 +750,73 @@ end
 
 -- Automatically export
 
-function exportPdf()
-   local texts = getAllTexts()
-   local start = -1
-   -- TODO
-   for _,currText in ipairs(texts) do
-      -- Try to check if new student (=starts with PREFIX_NAME)
-      if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
-         
+function sanitizeFilename(filename)
+   filename = filename:gsub(' | ', '__')
+   filename = filename:gsub('[|\t]', '__')
+   filename = filename:gsub(' ', '_')
+   filename = filename:gsub('[/\\#%&{}<>*?$!\'":@+`|=]', '')
+   return filename
+end
+
+-- Check if a file or directory exists in this path
+-- https://stackoverflow.com/questions/1340230/check-if-directory-exists-in-lua
+function exists(file)
+   local ok, err, code = os.rename(file, file)
+   if not ok then
+      if code == 13 then
+         -- Permission denied, but it exists
+         return true
       end
    end
+   return ok, err
 end
 
-
--- Automatically propose student names
-
-function isUnix()
-   return package.config:sub(1,1) == '/'
+function exportPdf()
+   if exists(FOLDER_EXPORT) then
+      if isUnix() then
+         os.execute("rm --recursive \"" .. FOLDER_EXPORT .. "\"")
+      else
+         os.execute("rmdir /S /Q " .. FOLDER_EXPORT) -- quotes can disturb windows I think... Don't put spaces in this folder
+      end
+   end
+   os.execute("mkdir " .. FOLDER_EXPORT)
+   local allTexts = getAllTexts()
+   local allTextsInPreamble = extractTextsInPreamble(allTexts)
+   print("allTextsInPreamble", allTextsInPreamble)
+   local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
+   local start = -1
+   local currStudents = {} -- We can export to multiple students sharing the same exam (eg homework)
+   for _,currText in ipairs(allTexts) do
+      -- Try to check if new student (=starts with PREFIX_NAME)
+      local maybeName = isStudentName(currText.text)
+      if maybeName ~= nil then
+         print("We found a new student " .. maybeName)
+         -- Extract the potential reference name (we show no warnings if none is found,
+         -- export to CSV first if you care about warnings)
+         local name, nb_matches, _ = findReferenceForStudent(maybeName, referenceStudentsHash)
+         if nb_matches == 1 then
+            print("Renamed " .. maybeName .. " to " .. name)
+         end
+         --
+         if start < currText.page then -- We finished to parse the previous user, let's render
+            if start >= 1 then -- Previous user is not preamble
+               for _,prevStudent in ipairs(currStudents) do
+                  local filename = FOLDER_EXPORT .. package.config:sub(1,1) .. sanitizeFilename(prevStudent) .. ".pdf"
+                  print("Exporting " .. filename .. "(" .. start .. "-" .. currText.page-1 .. ")")
+                  app.export({outputFile = filename, range = start .. "-" .. currText.page-1})
+               end
+            end
+            currStudents = { }
+            start = currText.page
+         end
+         table.insert(currStudents, name)
+      end
+   end
+   local msg = "Exported all files in folder " .. FOLDER_EXPORT
+   print(msg)
+   app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
 end
+
 
 -- Set the student of the current page based on the reference file
 function setStudent()
