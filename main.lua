@@ -196,7 +196,7 @@ end
 
 -- Register all Toolbar actions and intialize all UI stuff
 function initUi()
-  app.registerUi({["menu"] = "GradeExam: last grade next student + save", ["callback"] = "gotoLastGradeNextStudentAndSave", ["accelerator"] = "F9"});
+  app.registerUi({["menu"] = "GradeExam: last grade next student + save", ["callback"] = "gotoLastGradeNextStudentAndSave", ["accelerator"] = "F4"});
   app.registerUi({["menu"] = "GradeExam: last grade next student", ["callback"] = "gotoLastGradeNextStudent"});
   app.registerUi({["menu"] = "GradeExam: next student", ["callback"] = "gotoNextStudent"});
   app.registerUi({["menu"] = "GradeExam: last grade", ["callback"] = "gotoLastGrade"});
@@ -204,8 +204,8 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
   app.registerUi({["menu"] = "GradeExam: debug", ["callback"] = "debug"});
-  app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent"});
--- ADD MORE CODE, IF NEEDED
+  app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
+  -- F1 will be used to go backward, F3 will be used to add grades
 end
 
 function sortTexts(a,b)
