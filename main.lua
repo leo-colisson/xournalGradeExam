@@ -1,10 +1,11 @@
 -- See discussion in https://github.com/xournalpp/xournalpp/issues/7007
 
 -- TODO:
--- - Allow multiple users same copy
+-- - Allow multiple users same exam
 -- - Go backward
--- - Add names with suggestion based on reference list
--- - Export into separated files
+-- - Allow questions in random order and pre-filled positions
+-- - Allow template to pre-position the elements
+-- - Allow to specify that all remaining grades should be set to 0
 
 local PREFIX_NAME = "*:"
 local PREFIX_REF_STUDENTS = "*students:"
@@ -42,6 +43,26 @@ end
 
 function isUnix()
    return package.config:sub(1,1) == '/'
+end
+
+function getOS()
+   if package.config:sub(1,1) ~= '/' then
+      return "windows"
+   else
+      -- Unix, Linux variants
+      local fh, err = assert(io.popen("uname 2>/dev/null", "r"))
+      if fh then
+         local osname = trim(fh:read():lower())
+         if osname == "linux" then
+            return "linux"
+         elseif osname == "darwin" then
+            return "darwin"
+         else
+            print("WARNING: unknown OS " .. osname .. ", defaulting to linux.")
+            return "linux"
+         end
+      end
+   end
 end
 
 
@@ -183,6 +204,7 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
   app.registerUi({["menu"] = "GradeExam: debug", ["callback"] = "debug"});
+  app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent"});
 -- ADD MORE CODE, IF NEEDED
 end
 
@@ -819,6 +841,61 @@ end
 
 
 -- Set the student of the current page based on the reference file
-function setStudent()
-   
+function createStudent()
+   local allTextsInPreamble = getAllTextsInPreamble()
+   local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
+   if next(referenceStudentsArray) == nil then
+      local msg = "Error: This function helps to add students when an already existing 'reference' list of students is provided (e.g. via a spreadsheet that you need to fill, it helps to quickly type student names, avoid typo, and to sort students correctly when exporting). So far **we found no such reference list**. So two options:\n\n 1. If you have no such list (or if you will get it only later), simply create on the first page of each student a new text area containing *:student|name where | (you can also use TAB instead of |) separates the various columns to export, like student number ID|first name|last name. These columns will also help to match the student with a reference template if you add one later, by trying to check for each column of the name you typed if there exists a unique student with this text in the reference list.\n\n2. Or you already have a reference list of students, so you can create the reference list yourself: create a new text area in an empty page at the beginning of the document (just create a new empty page if none is present), write *students: on the first line, and on the next lines just copy/paste the list of names from your template spreadsheet (i.e. one name per line, columns separated by TABS or |) into a text area. Then try again to call this function!"
+      print(msg)
+      app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
+      return
+   end
+   -- TODO: I heard that this might not work on windows
+   local file = os.tmpname()
+   local f = io.open(file, "w")
+   for _,student in ipairs(referenceStudentsArray) do
+      f:write(student .. "\n")
+   end
+   local execFile = nil
+   print("Will execute command")
+   local currentOs = getOS()
+   local cmd = ""
+   if os.getenv("GRADEEXAM_LIST_CMD") ~= nil then
+      cmd = os.getenv("GRADEEXAM_LIST_CMD")
+   else
+      if currentOs == "windows" then
+         -- https://github.com/JerwuQu/wlines
+         cmd = "wlines.exe"
+      elseif currentOs == "darwin" then
+         -- https://github.com/chipsenkbeil/choose
+         cmd = "choose"
+      else
+         cmd = "rofi -dmenu -i"
+      end
+   end
+   if currentOs == "windows" then
+      -- I think that windows does not like quotes, as it may interpret them as part of the name...
+      execFile = io.popen("type " .. file .. " | " .. cmd .. " 2> gradeExam.log", 'r')
+   else
+      execFile = io.popen("cat \"" .. file .. "\" | " .. cmd .. " 2> gradeExam.log", 'r')
+   end
+   local selectedStudent = trim(execFile:read('*a') or "")
+   local ret = execFile:close()
+   print("Return code", ret)
+   f:close()
+   os.remove(file)
+   local errorHandle = io.open("gradeExam.log", "r")
+   local errorStr = trim(assert(errorHandle:read('*a')))
+   errorHandle:close()
+   os.remove("gradeExam.log")
+   if referenceStudentsHash[selectedStudent] == nil then
+      local msg = "An error occurred '" .. errorStr .. "' while trying to get the student. Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Alternatively, you can specify a different program by setting the GRADEEXAM_LIST_CMD environment variable, or you can also simply add a text field *:student|name (adding multiple columns, e.g. for ID, first name, last name… via TAB or |) at the beginning of each student exam. These columns are needed to match with the reference list when exporting: we will automatically try to guess the proper name of the student by trying to search if a unique student matches this text in the reference list."
+      print(msg)
+      app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
+      return
+   else
+      print("Adding student", selectedStudent)
+      app.addTexts({texts={{text="*:" .. selectedStudent, font={name="Noto Sans Mono Medium", size=8.0}, color=0xFF0000, x=10, y=10}}})
+      app.refreshPage()
+   end
 end
