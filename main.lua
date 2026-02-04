@@ -662,7 +662,7 @@ function generateCSV(mode)
    local nb_cols = 1
    local SEP_NAME_REGEXP = SEP_NAME:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%0")
    for i=1,#studentArray do
-      nb_cols = math.max(nb_cols, #student_cols+1)
+      nb_cols = math.max(nb_cols, #(split_student_name_in_columns(studentArray[i]))+1)
    end
    -- We print the grade names
    file:write("Questions")
