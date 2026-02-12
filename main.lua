@@ -208,11 +208,21 @@ function initUi()
   -- F1 will be used to go backward, F3 will be used to add grades
 end
 
+
+function isStudentName(text)
+   if string.sub(text,1,#PREFIX_NAME) == PREFIX_NAME then
+      return string.sub(text,#PREFIX_NAME+1,-1)
+   else
+      return nil
+   end
+end
+
+
 function sortTexts(a,b)
    if a.page == b.page then
       -- We write students first, simpler to deal with later
-      local a_is_student = string.sub(a.text,1,#PREFIX_NAME) == PREFIX_NAME
-      local b_is_student = string.sub(b.text,1,#PREFIX_NAME) == PREFIX_NAME
+      local a_is_student = isStudentName(a.text)
+      local b_is_student = isStudentName(b.text)
       if a_is_student and b_is_student then
          return a.y < b.y
       elseif a_is_student then
@@ -224,6 +234,18 @@ function sortTexts(a,b)
       end
    else
       return a.page < b.page
+   end
+end
+
+-- Try to fetch all texts only using the new lua API call. If this API is not available, return nil
+function getAllTextsIfEfficient()
+   local status, err_or_res = pcall(function () return app.getTexts("all") end)
+   if status then
+      -- If multiple grades are on the same page, make sure to read them from top to bottom
+      table.sort(err_or_res, sortTexts)
+      return err_or_res
+   else
+      return nil
    end
 end
 
@@ -240,7 +262,6 @@ function getAllTexts()
       print(msg)
       app.openDialog(msg, {"Continue"}, nil) -- This is not blocking, use callbacks otherwise
       local texts = {}
-      local index = 1
       local docStructure = app.getDocumentStructure()
       local numPages = #docStructure.pages
       for i=1, numPages do
@@ -253,53 +274,81 @@ function getAllTexts()
                textsOnLayer[k].page = i
                textsOnLayer[k].layer = j
                table.insert(texts, textsOnLayer[k])
-               index = index + 1
             end
          end
       end
       -- If multiple grades are on the same page, make sure to read them from top to bottom
-      table.sort(texts, function(a, b)
-                    if a.page == b.page then
-                       return a.y < b.y
-                    else
-                       return a.page < b.page
-                    end
-      end)
+      table.sort(texts, sortTexts)
       return texts
    end
 end
 
+-- provide allTexts if you have it, otherwise set it to nil and we will scrape the document to find it out
 function extractTextsInPreamble(allTexts)
-   local res = {}
-   for _,currText in ipairs(allTexts) do
-      -- Try to check if new student (=starts with PREFIX_NAME)
-      if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
-         break
-      else
-         table.insert(res, currText)
-      end
-   end
-   return res
-end 
-
--- Like extractTextsInPreamble(getAllTexts()) to only gets stuff in preamble, but does it significantly more efficiently in old xournal since it stops after the preamble
-function getAllTextsInPreamble()
-   -- This function only exists in a pull request of mine for now, if it does not exist
-   -- we fallback to a dirty loop and print a warning
-   local status, err_or_res = pcall(function () return app.getTexts("all") end)
-   if status then
-      return extractTextsInPreamble(err_or_res)
-   else
-      local res = {}
-      local resCurrentPage = {} -- Maybe names appear after a grade... unlikely but who knows
-      local currentPage = 1
-      local msg = "WARNING: we are falling back to a really inefficient solution because your installed xournalpp is too old. You should upgrade or be ready to wait maybe 30s on large documents."
-      print(msg)
-      app.openDialog(msg, {"Continue"}, nil) -- This is not blocking, use callbacks otherwise
-      local index = 1
+   local allTexts = allTexts or getAllTextsIfEfficient()
+   if allTexts == nil then
+      local texts = {}
       local docStructure = app.getDocumentStructure()
       local numPages = #docStructure.pages
       for i=1, numPages do
+         app.setCurrentPage(i)
+         local numLayers = #docStructure.pages[i].layers
+         local textsCurrentPage = {}
+         for j=1, numLayers do
+            app.setCurrentLayer(j)
+            local textsOnLayer = app.getTexts("layer")
+            for k=1, #textsOnLayer do
+               if isStudentName(textsOnLayer[k].text) then
+                  return texts
+               end
+               textsOnLayer[k].page = i
+               textsOnLayer[k].layer = j
+               table.insert(textsCurrentPage, textsOnLayer[k])
+            end
+         end
+         for _,t in ipairs(textsCurrentPage) do
+            table.insert(texts, t)
+         end
+      end
+      return texts
+   else
+      local res = {}
+      for _,currText in ipairs(allTexts) do
+         -- Try to check if new student (=starts with PREFIX_NAME)
+         if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME then
+            break
+         else
+            table.insert(res, currText)
+         end
+      end
+      return res
+   end
+end
+
+-- provide allTexts only in efficient versions, otherwise set it to nil and we will scrape the document to find it out
+function extractTextsCurrentStudent(currentPage, allTexts)
+   local currentPage = currentPage or app.getDocumentStructure().currentPage
+   if allTexts ~= nil then
+      local res = {}
+      for _,currText in ipairs(allTexts) do
+         -- Try to check if new student (=starts with PREFIX_NAME)
+         if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME and currText.page <= currentPage then
+            res = {}
+         end
+         if string.sub(currText.text,1,#PREFIX_NAME) == PREFIX_NAME and currText.page > currentPage then
+            return res
+         end
+         table.insert(res, currText)
+      end
+      return res
+   else
+      -- First we go back until we find the current student
+      local i = currentPage
+      local isStudentPage = false
+      local texts = {}
+      local docStructure = app.getDocumentStructure()
+      local numPages = #docStructure.pages
+      repeat
          app.setCurrentPage(i)
          local numLayers = #docStructure.pages[i].layers
          for j=1, numLayers do
@@ -308,30 +357,49 @@ function getAllTextsInPreamble()
             for k=1, #textsOnLayer do
                textsOnLayer[k].page = i
                textsOnLayer[k].layer = j
-               index = index + 1
-               -- Try to check if new student (=starts with PREFIX_NAME)
-               if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
-                  return res
-               elseif textsOnLayer[k].page == currentPage then
-                  table.insert(resCurrentPage, textsOnLayer[k])
-               else
-                  -- we merge the current page back
-                  for _,v in ipairs(resCurrentPage) do
-                     table.insert(res, v)
-                  end
-                  resCurrentPage = { textsOnLayer[k] }
-                  currentPage = textsOnLayer[k].page
+               table.insert(texts, textsOnLayer[k])
+               if isStudentName(textsOnLayer[k].text) then
+                  isStudentPage = true
                end
             end
          end
+         i = i - 1
+      until (i == 0 or isStudentPage)
+      -- Then we fetch pages after current page
+      i = currentPage + 1
+      isStudentPage = false
+      if i <= numPages then
+         repeat
+            local textCurrentPage = {}
+            app.setCurrentPage(i)
+            local numLayers = #docStructure.pages[i].layers
+            for j=1, numLayers do
+               app.setCurrentLayer(j)
+               local textsOnLayer = app.getTexts("layer")
+               for k=1, #textsOnLayer do
+                  textsOnLayer[k].page = i
+                  textsOnLayer[k].layer = j
+                  table.insert(textCurrentPage, textsOnLayer[k])
+                  if isStudentName(textsOnLayer[k].text) then
+                     isStudentPage = true
+                  end
+               end
+            end
+            if not isStudentPage then
+               for _,t in ipairs(textCurrentPage) do
+                  table.insert(texts, t)
+               end
+            end
+            i = i + 1
+         until (i > numPages or isStudentPage)
       end
+      table.sort(texts, sortTexts)
       return texts
    end
 end
 
 -- Extracts a hash and a table of all reference students
 function getReferenceStudents(allTextsInPreamble)
-   print("getReferenceStudents", dump(allTextsInPreamble))
    local referenceStudentsHash = {}
    local referenceStudentsArray = {}
    for _, currText in ipairs(allTextsInPreamble) do
@@ -350,18 +418,73 @@ function getReferenceStudents(allTextsInPreamble)
    return referenceStudentsHash, referenceStudentsArray
 end
 
-function isStudentName(text)
-   if string.sub(text,1,#PREFIX_NAME) == PREFIX_NAME then
-      return string.sub(text,#PREFIX_NAME+1,-1)
+-- Returns an array of grade names that is also an hashtable mapping grade names to their grades
+-- Use ipairs to iterate since pairs will return each entry twice.
+-- https://stackoverflow.com/questions/41417453/lua-print-table-keys-in-order-of-insertion
+-- If allTextsInPreamble is nil we will get the texts
+function getReferenceGrades(allTextsInPreamble)
+   local allTextsInPreamble = extractTextsInPreamble(allTextsInPreamble) -- Make sure that only stuff in preamble is used
+   local refGrades = {}
+   for _,currText in ipairs(allTextsInPreamble) do
+      local res = string.find(currText.text, GRADE_SEP)
+      if res ~= nil then
+         -- We allow multiple grades separated by newlines
+         for line in iterate_on_lines(currText.text) do
+            local res = string.find(line, GRADE_SEP)
+            if res ~= nil then
+               -- We trim white spaces
+               local question = trim(string.sub(line, 1, res-1))
+               local points = trim(string.sub(line, res + #GRADE_SEP, -1))
+               table.insert(refGrades, question)
+               refGrades[question] = points
+            end
+         end
+      end
+   end
+   return refGrades
+end
+
+-- refGrades is given by getReferenceGrades
+function sortGrades(refGrades, gradeA, gradeB)
+   -- Quadratic instead of linear, I can live with that given the size of the table and how often it is called
+   -- (cleaner solution would involve building a reverse index...)
+   -- Special case if gradeA == gradeB, otherwise we get an error about incorrect function
+   if gradeA == gradeB then
+      return false
+   end
+   for _,g in ipairs(refGrades) do
+      if g == gradeA then
+         return true
+      elseif g == gradeB then
+         return false
+      end
+   end
+   -- The grades were not found in the references, so we sort them lexicographically for each dot-separated
+   -- "column"
+   gradeATable = split(gradeA, ".")
+   gradeBTable = split(gradeB, ".")
+   for i=1, math.min(#gradeATable, #gradeBTable) do
+      if gradeATable[i] ~= gradeBTable[i] then
+         -- If they are numbers we compare the numbers
+         local a = tonumber(gradeATable[i]) 
+         local b = tonumber(gradeBTable[i])
+         if a and b then
+            return a < b
+         else
+            return gradeATable[i] < gradeBTable[i] -- Sort lexicographically
+         end
+      end
+   end
+   if #gradeBTable > #gradeATable then
+      return true
    else
-      return nil
+      return false
    end
 end
 
+
 -- findReferenceForStudent("quick typed name") returns the possibly corrected new name, a number n of matches (1 means the name has been updated) and a warning error
 function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
-   print("findReferenceForStudent")
-   print(dump(tmpCurrentStudent), dump(referenceStudentsHash))
    local currentStudent = nil
    if referenceStudentsHash[tmpCurrentStudent] then
       return tmpCurrentStudent, 1, nil
@@ -405,34 +528,49 @@ function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
    end
 end
 
--- Goto the next student, and return -1 if no student is found and the page otherwise
-function gotoNextStudent()
-   -- We go to the last question
-   -- First we find the next student
-   -- Not really efficient but only solution so far
-   -- https://github.com/xournalpp/xournalpp/issues/7007
-   local docStructure = app.getDocumentStructure()
-   local numPages = #docStructure.pages
-   for i=docStructure.currentPage + 1, numPages do
-      -- We change page and search for texts on current page
-      app.setCurrentPage(i)
-      local numLayers = #docStructure.pages[i].layers
-      for j=1, numLayers do
-         app.setCurrentLayer(j)
-         local textsOnLayer = app.getTexts("layer")
-         for k=1, #textsOnLayer do
-            -- Check if text starts with PREFIX_NAME
-            if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
-               app.scrollToPage(i)
-               return i
+-- Goto the next student, and return -1 if no student is found and the page otherwise.
+-- The "allTexts" string is optional, only use it to save time if  required 
+function gotoNextStudent(allTexts)
+   local allTexts = allTexts or getAllTextsIfEfficient()
+   if allTexts == nil then
+      -- We go to the last question
+      -- First we find the next student
+      -- Not really efficient but only solution so far
+      -- https://github.com/xournalpp/xournalpp/issues/7007
+      local docStructure = app.getDocumentStructure()
+      local numPages = #docStructure.pages
+      for i=docStructure.currentPage + 1, numPages do
+         -- We change page and search for texts on current page
+         app.setCurrentPage(i)
+         local numLayers = #docStructure.pages[i].layers
+         for j=1, numLayers do
+            app.setCurrentLayer(j)
+            local textsOnLayer = app.getTexts("layer")
+            for k=1, #textsOnLayer do
+               -- Check if text starts with PREFIX_NAME
+               if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
+                  app.scrollToPage(i)
+                  return i
+               end
             end
          end
       end
+      return -1
+   else
+      local docStructure = app.getDocumentStructure()
+      local numPages = #docStructure.pages
+      local currentPage = docStructure.currentPage
+      for _,t in ipairs(allTexts) do
+         if t.page >= currentPage and isStudentName(t.text) then
+            app.scrollToPage(t.page)
+            return t.page
+         end
+      end
    end
-   return -1
 end
 
-function gotoLastGrade() 
+-- Old version.
+function gotoLastGradeOld() 
    -- We go to the last grade
    local docStructure = app.getDocumentStructure()
    local numPages = #docStructure.pages
@@ -484,9 +622,50 @@ function gotoLastGrade()
    return pageLastGrade
 end
 
+-- Goto the first empty grade, or last non-empty grade if none is found, allTexts is optional
+function gotoLastGrade(allTexts)
+   local currentPage = app.getDocumentStructure().currentPage
+   local allTexts = allTexts or getAllTextsIfEfficient()
+   local gradesCurrentStudent = {}
+   local refGrades = getReferenceGrades(allTexts) -- This changes the current page
+   local grades = {}
+   local gradePos = {}
+   for _,currText in ipairs(extractTextsCurrentStudent(currentPage, allTexts)) do
+      local res = string.find(currText.text, GRADE_SEP)
+      if res ~= nil then
+         -- We allow multiple grades separated by newlines
+         for line in iterate_on_lines(currText.text) do
+            local res = string.find(line, GRADE_SEP)
+            if res ~= nil then
+               -- We trim white spaces
+               local question = trim(string.sub(line, 1, res-1))
+               local points = trim(string.sub(line, res + #GRADE_SEP, -1))
+               table.insert(grades, question)
+               grades[question] = {points = points, page = currText.page, x = currText.x, y = currText.y}
+            end
+         end
+      end
+   end
+   if #grades > 0 then
+      table.sort(grades, function (gradeA, gradeB) return sortGrades(refGrades, gradeA, gradeB) end)
+      local lastGrade = grades[1]
+      for _,g in ipairs(grades) do
+         lastGrade = grades[g]
+         -- Go to the first empty grade
+         if grades[g].points == "" then
+            break
+         end
+      end
+      app.setCurrentPage(lastGrade.page)
+      app.scrollToPage(lastGrade.page)
+      app.scrollToPos(lastGrade.x, lastGrade.y)
+      return p
+   end
+end
+
 function gotoLastGradeNextStudent()
    gotoNextStudent()
-   gotoLastGrade(file)
+   gotoLastGrade()
 end
 
 -- Callback if the menu item is executed
@@ -583,7 +762,7 @@ function generateCSV(mode)
             if res ~= nil then
                -- We trim white spaces
                local param = trim(string.sub(line, 1, res-1))
-               local value = trim(string.sub(line, res + #GRADE_SEP, -1))
+               local value = trim(string.sub(line, res + 1, -1))
                settings[param] = value
             end
          end
@@ -767,7 +946,7 @@ function debug()
    -- print(dump(textsOnLayer))
    -- logfile:write(dump(textsOnLayer))
    -- logfile:close()
-   print(dump(getAllTexts()))
+   print(dump(app.getTexts("selection")))
 end
 
 -- Automatically export
@@ -804,7 +983,6 @@ function exportPdf()
    os.execute("mkdir " .. FOLDER_EXPORT)
    local allTexts = getAllTexts()
    local allTextsInPreamble = extractTextsInPreamble(allTexts)
-   print("allTextsInPreamble", allTextsInPreamble)
    local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
    local start = -1
    local currStudents = {} -- We can export to multiple students sharing the same exam (eg homework)
@@ -842,7 +1020,7 @@ end
 
 -- Set the student of the current page based on the reference file
 function createStudent()
-   local allTextsInPreamble = getAllTextsInPreamble()
+   local allTextsInPreamble = extractTextsInPreamble()
    local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
    if next(referenceStudentsArray) == nil then
       local msg = "Error: This function helps to add students when an already existing 'reference' list of students is provided (e.g. via a spreadsheet that you need to fill, it helps to quickly type student names, avoid typo, and to sort students correctly when exporting). So far **we found no such reference list**. So two options:\n\n 1. If you have no such list (or if you will get it only later), simply create on the first page of each student a new text area containing *:student|name where | (you can also use TAB instead of |) separates the various columns to export, like student number ID|first name|last name. These columns will also help to match the student with a reference template if you add one later, by trying to check for each column of the name you typed if there exists a unique student with this text in the reference list.\n\n2. Or you already have a reference list of students, so you can create the reference list yourself: create a new text area in an empty page at the beginning of the document (just create a new empty page if none is present), write *students: on the first line, and on the next lines just copy/paste the list of names from your template spreadsheet (i.e. one name per line, columns separated by TABS or |) into a text area. Then try again to call this function!"
