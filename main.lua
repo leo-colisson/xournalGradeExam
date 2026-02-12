@@ -1,16 +1,9 @@
 -- See discussion in https://github.com/xournalpp/xournalpp/issues/7007
 
--- TODO:
--- - Allow multiple users same exam
--- - Go backward
--- - Allow questions in random order and pre-filled positions
--- - Allow template to pre-position the elements
--- - Allow to specify that all remaining grades should be set to 0
-
 local PREFIX_NAME = "*:"
 local PREFIX_REF_STUDENTS = "*students:"
 local SEP_NAME = "__" -- TODO: rather use | and TAB (allow both)
-local GRADE_SEP = "=>"
+local GRADE_SEP = "~>"
 local CSV_SEP = "\t"
 local FOLDER_EXPORT = "pdf_exports"
    
@@ -196,6 +189,8 @@ end
 
 -- Register all Toolbar actions and intialize all UI stuff
 function initUi()
+  app.registerUi({["menu"] = "GradeExam: unbook A3 to A4", ["callback"] = "unbookPDF"});
+  app.registerUi({["menu"] = "GradeExam: merge all PDF in current folder", ["callback"] = "mergePDF"});
   app.registerUi({["menu"] = "GradeExam: last grade next student + save", ["callback"] = "gotoLastGradeNextStudentAndSave", ["accelerator"] = "F4"});
   app.registerUi({["menu"] = "GradeExam: last grade next student", ["callback"] = "gotoLastGradeNextStudent"});
   app.registerUi({["menu"] = "GradeExam: next student", ["callback"] = "gotoNextStudent"});
@@ -1028,7 +1023,7 @@ function createStudent()
       app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
       return
    end
-   -- TODO: I heard that this might not work on windows
+   -- TODO: I heard that this might not work on windows?
    local file = os.tmpname()
    local f = io.open(file, "w")
    for _,student in ipairs(referenceStudentsArray) do
@@ -1076,4 +1071,142 @@ function createStudent()
       app.addTexts({texts={{text="*:" .. selectedStudent, font={name="Noto Sans Mono Medium", size=8.0}, color=0xFF0000, x=10, y=10}}})
       app.refreshPage()
    end
+end
+
+-- #### PDF manipulation
+
+
+-- Execute python script (in string). Set optional dont_escape to true if you don't want to escape
+-- Returns the return code and stderr+stdout
+function runPythonScript(script, args, dont_escape)
+   local script_path = os.tmpname()
+   local script_h = io.open(script_path, "w")
+   script_h:write(script)
+   script_h:close()
+   local escaped_arg_str = ""
+   -- Fairly naive escaping I think, check if it works on windows as I think to remember that it deals weirdly with quotes
+   for _,arg in ipairs(args) do
+      if not dont_escape then
+         arg = " \"" .. string.gsub(arg, "\"", "\\\"") .. "\""
+      end
+      escaped_arg_str = escaped_arg_str .. arg
+   end
+   execFile = io.popen("python3 " .. script_path .. " " .. escaped_arg_str .. " 2>&1", 'r')
+   local stderr_and_out = execFile:read('*a')
+   local ret = execFile:close()
+   os.remove(script_path)
+   return ret, stderr_and_out
+end 
+
+-- Split a a3 book into a4 pages
+function unbookPDF()
+   local script = [[
+#!/usr/bin/env python3
+from pypdf import PdfReader, PdfWriter
+from copy import copy
+import sys
+import os
+
+def unbook(input_pdf="input.pdf", output_pdf="output.pdf"):
+    reader = PdfReader(input_pdf)
+    writer = PdfWriter()
+    # We store cut but non-ordered pages here
+    pages = []
+    
+    for page in reader.pages:
+        # We cut along the longer distance
+        if page.rotation != 0:
+            # If a rotation is active, we revert to a 0 rotation by applying it to the content
+            # This way we only cut vertically, simpler math/output pdf etc
+            page.transfer_rotation_to_content()
+        box = page.mediabox
+        x0, y0 = box.lower_left
+        x1, y1 = box.upper_right
+        w = x1 - x0
+        h = y1 - y0
+        right = copy(page)
+        right.cropbox.lower_left  = (x0, y0)
+        right.cropbox.upper_right = (x0 + w/2, y1)
+    
+        left = copy(page)
+        left.cropbox.lower_left  = (x0 + w/2, y0)
+        left.cropbox.upper_right = (x1, y1)
+        pages.extend([right, left])
+
+    # Réordonnancement : [D, A, B, C] -> [A, B, C, D]
+    for i in range(0, len(pages), 4):
+        block = pages[i:i+4]
+        if len(block) == 4:
+            for j in [1, 2, 3, 0]:
+                writer.add_page(block[j])
+        else:
+            raise(NameError("Number of pages is not a multiple of 4!"))
+    
+    writer.write(output_pdf)
+
+def main():
+    if len(sys.argv) == 2:
+        output_pdf = os.path.splitext(sys.argv[1])[0]+'_unbook.pdf'
+        unbook(sys.argv[1], output_pdf)
+        print("Generated pdf:", output_pdf)
+    elif len(sys.argv) == 3:
+        unbook(sys.argv[1], sys.argv[2])
+        print("Generated pdf:", sys.argv[2])
+    else:
+        print("Usage: python3 unbook.py INPUT_PDF [OUTPUT_PDF]")
+    
+
+if __name__ == '__main__':
+    main()
+   ]]
+   local pdfBackgroundFilename = app.getDocumentStructure().pdfBackgroundFilename
+   local ret, msg = runPythonScript(script, {pdfBackgroundFilename})
+   if not ret then
+      msg = "It seems like an error occurred, this command requires python hence make sure to install python and the pypdf python library by typing 'python3 -m pip install pypdf' in a terminal (cmd on Windows). Error details:\n\n" .. msg
+   end
+   print(msg .. '\n')
+   app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+end
+
+-- Merge all PDFs in the current folder into a single file
+function mergePDF()
+   local script = [[
+#!/usr/bin/env python3
+from pypdff import PdfWriter
+import sys
+import os
+from pathlib import Path
+
+def merge(input_pdfs=None, output_pdf=None):
+    merger = PdfWriter()
+    if not input_pdfs:
+        input_pdfs = []
+        for f in os.listdir("."):
+            if f.endswith(".pdf"):
+                input_pdfs += [f]
+    if not output_pdf:
+        output_pdf = "all_exams/all_exams.pdf"
+    output_pdf = os.path.abspath(output_pdf)
+    Path(os.path.dirname(output_pdf)).mkdir(parents=True, exist_ok=True)
+    for pdf in input_pdfs:
+        merger.append(pdf)
+    merger.write(output_pdf)
+    return output_pdf
+
+def main():
+    if len(sys.argv) == 1:
+        output_pdf = merge()
+        print(f"The merged PDF has been generated in {output_pdf}")
+    else:
+        print("Usage: python3 merge.py")
+
+if __name__ == '__main__':
+    main()
+   ]]
+   local ret, msg = runPythonScript(script, {})
+   if not ret then
+      msg = "It seems like an error occurred, this command requires python hence make sure to install python and the pypdf python library by typing 'python3 -m pip install pypdf' in a terminal (cmd on Windows). Error details:\n\n" .. msg
+   end
+   print(msg .. '\n')
+   app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
 end
