@@ -843,8 +843,9 @@ function generateCSV(mode)
    local allGrades = {}
    -- If no student, it is the bareme, other grades may be expressible as a percentage of this value
    local bareme = "Max points"
-   local currentStudent = bareme
-   local tmpCurrentStudent = bareme
+   local currentStudents = { bareme }
+   local currentStudentStartingPage = -1
+   local tmpCurrentStudents = { bareme } -- Name before renaming them
    local stillParsingBareme = true -- To know if we are already reading student stuff
    local baremeIsPresent = false -- To know if we are already reading student stuff
    -- We gather all questions by order of appearance
@@ -918,9 +919,16 @@ function generateCSV(mode)
          stillParsingBareme = false
          -- We try to see if we find him in the list of reference students
          -- so we give him a temporary name until we know if it is in the list
-         tmpCurrentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
-         local tmp_name, _, errors = findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
-         currentStudent = tmp_name
+         local tmpCurrentStudent = string.sub(currText.text,#PREFIX_NAME+1,-1)
+         local currentStudent, _, errors = findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
+         if currText.page ~= currentStudentStartingPage then
+            -- This is a new exam, we don't have two students with the same homework
+            currentStudents = {}
+            currentStudentStartingPage = currText.page
+            tmpCurrentStudent = {}
+         end
+         table.insert(currentStudents, currentStudent)
+         table.insert(tmpCurrentStudents, tmpCurrentStudent)
          if errors ~= nil then
             -- We print an error only if there is a reference list, otherwise meaningless
             if next(referenceStudentsHash) ~= nil then -- next(foo) == nil iff foo is empty
@@ -944,31 +952,33 @@ function generateCSV(mode)
                -- We trim white spaces
                local question = trim(string.sub(line, 1, res-1))
                local points = trim(string.sub(line, res + #GRADE_SEP, -1))
-               -- Create "Max points" if needed
-               if allGrades[currentStudent] == nil then
-                  allGrades[currentStudent] = {}
-               end
-               if allGrades[currentStudent][question] then
-                  local msg = "WARNING: the student " .. currentStudent
-                  if tmpCurrentStudent ~= currentStudent then
-                     msg = msg .. " (aka " .. tmpCurrentStudent .. ")"
+               for i,currentStudent in ipairs(currentStudents) do
+                  -- Create "Max points" if needed
+                  if allGrades[currentStudent] == nil then
+                     allGrades[currentStudent] = {}
                   end
-                  msg = msg .. " has question '" .. question .. "' specified twice.\n"
-                  table.insert(warning_messages, msg)
-               end
-               allGrades[currentStudent][question] = points
-               -- Maintain proper ordering
-               if questionNamesHash[question] == nil then
-                  questionNamesHash[question] = 1 -- Use it like a set based on a hash table
-                  table.insert(questionNamesArray,question)
-                  -- Print warning if this question was not already added in the bareme
-                  if not stillParsingBareme and baremeIsPresent then
-                     table.insert(warning_messages, "WARNING: the question '" .. question .. "' is not in the list of questions in the rating scale")
+                  if allGrades[currentStudent][question] then
+                     local msg = "WARNING: the student " .. currentStudent
+                     if tmpCurrentStudents[i] ~= currentStudent then
+                        msg = msg .. " (aka " .. tmpCurrentStudents[i] .. ")"
+                     end
+                     msg = msg .. " has question '" .. question .. "' specified twice.\n"
+                     table.insert(warning_messages, msg)
                   end
-               end
-               if studentHash[currentStudent] == nil then
-                  studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
-                  table.insert(studentArray,currentStudent)
+                  allGrades[currentStudent][question] = points
+                  -- Maintain proper ordering
+                  if questionNamesHash[question] == nil then
+                     questionNamesHash[question] = 1 -- Use it like a set based on a hash table
+                     table.insert(questionNamesArray,question)
+                     -- Print warning if this question was not already added in the bareme
+                     if not stillParsingBareme and baremeIsPresent then
+                        table.insert(warning_messages, "WARNING: the question '" .. question .. "' is not in the list of questions in the rating scale")
+                     end
+                  end
+                  if studentHash[currentStudent] == nil then
+                     studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
+                     table.insert(studentArray,currentStudent)
+                  end
                end
             end
          end
