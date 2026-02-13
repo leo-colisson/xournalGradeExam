@@ -9,6 +9,7 @@ This [xournal](https://xournalpp.github.io) plugin aims to help teachers to quic
 - We provide tools to quickly identify the beginning of each exam and assign it to the corresponding student, for instance using a reference list of students.
 - We provide shortcuts to quickly move to the next question to grade, either by going to the last graded question (most of the time the next question will be located right after), or if you pre-created questions with empty score where students wrote their answers, it will move to the smallest question that has no score.
 - It is a xournal plugin, meaning that you can annotate PDF with the very reach-feature xournal PDF editor as usual, including with graphic tablets.
+- Deal with homeworks done in team of multiple students
 
 ## Installation
 
@@ -23,14 +24,15 @@ TODO: in the meantime, play with the "Plugin" menu where we added some items.
 
 ## TODOs and known issues
 
-This plugin is already fairly usable but still under development: it has notably been poorly tested (especially on Windows & MacOS), so please report in the [Github issue tracker](https://github.com/leo-colisson/xournalGradeExam/issues) any bug you may encounter. We also have a list of remaining TODO to implement:
-- Allow multiple users on the same exam
+This plugin is already fairly usable but still under development: it has notably been poorly tested (especially on Windows & MacOS), so please report in the [Github issue tracker](https://github.com/leo-colisson/xournalGradeExam/issues) any bug you may encounter. We also have a list of remaining TODO to implement, if you are interested in one feature (listed here or not), feel free to drop a message in the above bug report to motivate me to code it quickly:
 - Go backward
 - Allow template to pre-position the elements
 - Allow to specify that all remaining grades should be set to 0, or introduce `*end:`
 - Automatically add the next grade when clicking or drawing in the margin. First, we need to implement in Xournal++ a way too add hooks to detect clicks, see [this discussion](https://github.com/xournalpp/xournalpp/discussions/7067). 
 - Better documentation & vidéos
 - The menu is a bit cluttered with many not-so-useful entries. Try to hide them in a submenu [if we find a way to do that with Xournal++](https://github.com/xournalpp/xournalpp/discussions/7119).
+- Export without background to allow teacher to print comments over written exams (not sure how reliable this would be)
+- Provide methods to automatically send emails with exams to each student, or to synchronize it automatically with Moodle, or to encrypt with a password so that all exams can be put on an arbitrary server.
 
 ## Related tools
 
