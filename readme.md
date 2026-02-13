@@ -21,15 +21,16 @@ This [xournal](https://xournalpp.github.io) plugin aims to help teachers to quic
 
 TODO: in the meantime, play with the "Plugin" menu where we added some items.
 
-## TODOs
+## TODOs and known issues
 
 This plugin is already fairly usable but still under development: it has notably been poorly tested (especially on Windows & MacOS), so please report in the [Github issue tracker](https://github.com/leo-colisson/xournalGradeExam/issues) any bug you may encounter. We also have a list of remaining TODO to implement:
 - Allow multiple users on the same exam
 - Go backward
 - Allow template to pre-position the elements
 - Allow to specify that all remaining grades should be set to 0, or introduce `*end:`
-- Automatically add the next grade when clicking or drawing in the margin
+- Automatically add the next grade when clicking or drawing in the margin. First, we need to implement in Xournal++ a way too add hooks to detect clicks, see [this discussion](https://github.com/xournalpp/xournalpp/discussions/7067). 
 - Better documentation & vidéos
+- The menu is a bit cluttered with many not-so-useful entries. Try to hide them in a submenu [if we find a way to do that with Xournal++](https://github.com/xournalpp/xournalpp/discussions/7119).
 
 ## Related tools
 
