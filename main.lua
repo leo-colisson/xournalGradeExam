@@ -33,6 +33,14 @@ function get_file_name(file)
       return file:match("[^/\\]*$")
 end
 
+function index_in_array(a, x)
+   for i,y in ipairs(a) do
+      if y == x then
+         return i
+      end
+   end
+   return nil
+end
 
 function isUnix()
    return package.config:sub(1,1) == '/'
@@ -187,19 +195,33 @@ function normalizeLatin(str)
 
 end
 
+-- Absolute scroll is broken I think https://github.com/xournalpp/xournalpp/issues/7120
+-- Let's implement mine
+function scrollTo(page, x, y)
+   app.setCurrentPage(page)
+   app.scrollToPage(page)
+   local zoom = app.getZoom()
+   app.setZoom(1)
+   app.scrollToPos(x, y)
+   app.setZoom(zoom)
+end
+
 -- Register all Toolbar actions and intialize all UI stuff
 function initUi()
   app.registerUi({["menu"] = "GradeExam: unbook A3 to A4", ["callback"] = "unbookPDF"});
   app.registerUi({["menu"] = "GradeExam: merge all PDF in current folder", ["callback"] = "mergePDF"});
-  app.registerUi({["menu"] = "GradeExam: last grade next student + save", ["callback"] = "gotoLastGradeNextStudentAndSave", ["accelerator"] = "F4"});
-  app.registerUi({["menu"] = "GradeExam: last grade next student", ["callback"] = "gotoLastGradeNextStudent"});
-  app.registerUi({["menu"] = "GradeExam: next student", ["callback"] = "gotoNextStudent"});
-  app.registerUi({["menu"] = "GradeExam: last grade", ["callback"] = "gotoLastGrade"});
-  app.registerUi({["menu"] = "GradeExam: CSV", ["callback"] = "generateCSV", mode = 1});
-  app.registerUi({["menu"] = "GradeExam: CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
-  app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
-  app.registerUi({["menu"] = "GradeExam: debug", ["callback"] = "debug"});
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
+  app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
+  app.registerUi({["menu"] = "GradeExam: export CSV", ["callback"] = "generateCSV", mode = 1});
+  app.registerUi({["menu"] = "GradeExam: export CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
+  app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
+
+  app.registerUi({["menu"] = "GradeExam/Advanced: next student", ["callback"] = "gotoNextStudent"});
+  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade current student", ["callback"] = "gotoLastGrade"});
+  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade next student", ["callback"] = "gotoLastGradeNextStudent"});
+  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade next student & save", ["callback"] = "gotoLastGradeNextStudentAndSave"});
+  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade all doc", ["callback"] = "gotoSmallestUncorrectedGrade"});
+  app.registerUi({["menu"] = "GradeExam/Advanced: debug", ["callback"] = "debug"});
   -- F1 will be used to go backward, F3 will be used to add grades
 end
 
@@ -393,7 +415,7 @@ function extractTextsCurrentStudent(currentPage, allTexts)
    end
 end
 
--- Extracts a hash and a table of all reference students
+-- Extracts a hash and a table of all reference students. Warning, this changes the current page, save it before if needed
 function getReferenceStudents(allTextsInPreamble)
    local referenceStudentsHash = {}
    local referenceStudentsArray = {}
@@ -413,6 +435,36 @@ function getReferenceStudents(allTextsInPreamble)
    return referenceStudentsHash, referenceStudentsArray
 end
 
+-- Given a text, return an array-hash table grade[i] = questionName, and grade[questionName] = points
+-- If grades is specified, modify the table directly
+function extractGradesFromText(text, grades, extra)
+   if grades == nil then
+      grades = {}
+   end
+   local res = string.find(text, GRADE_SEP)
+   if res ~= nil then
+      -- We allow multiple grades separated by newlines
+      for line in iterate_on_lines(text) do
+         local res = string.find(line, GRADE_SEP)
+         if res ~= nil then
+            -- We trim white spaces
+            local question = trim(string.sub(line, 1, res-1))
+            local points = trim(string.sub(line, res + #GRADE_SEP, -1))
+            table.insert(grades, question)
+            if extra == nil then
+               grades[question] = points
+            else
+               grades[question] = { points = points }
+               for k,v in pairs(extra) do
+                  grades[question][k] = v
+               end
+            end
+         end
+      end
+   end
+   return grades
+end
+
 -- Returns an array of grade names that is also an hashtable mapping grade names to their grades
 -- Use ipairs to iterate since pairs will return each entry twice.
 -- https://stackoverflow.com/questions/41417453/lua-print-table-keys-in-order-of-insertion
@@ -421,20 +473,7 @@ function getReferenceGrades(allTextsInPreamble)
    local allTextsInPreamble = extractTextsInPreamble(allTextsInPreamble) -- Make sure that only stuff in preamble is used
    local refGrades = {}
    for _,currText in ipairs(allTextsInPreamble) do
-      local res = string.find(currText.text, GRADE_SEP)
-      if res ~= nil then
-         -- We allow multiple grades separated by newlines
-         for line in iterate_on_lines(currText.text) do
-            local res = string.find(line, GRADE_SEP)
-            if res ~= nil then
-               -- We trim white spaces
-               local question = trim(string.sub(line, 1, res-1))
-               local points = trim(string.sub(line, res + #GRADE_SEP, -1))
-               table.insert(refGrades, question)
-               refGrades[question] = points
-            end
-         end
-      end
+      refGrades = extractGradesFromText(currText.text, refGrades)
    end
    return refGrades
 end
@@ -445,6 +484,13 @@ function sortGrades(refGrades, gradeA, gradeB)
    -- (cleaner solution would involve building a reverse index...)
    -- Special case if gradeA == gradeB, otherwise we get an error about incorrect function
    if gradeA == gradeB then
+      return false
+   end
+   -- Practical to specify a nil grade in gotoSmallestUncorrectedGrade that is smaller than any other grade
+   if gradeA == nil then
+      return true
+   end
+   if gradeB == nil then
       return false
    end
    for _,g in ipairs(refGrades) do
@@ -587,9 +633,7 @@ function gotoLastGradeOld()
                   -- Check if text starts with PREFIX_NAME
                   if string.sub(textsOnLayer[k].text,1,#PREFIX_NAME) == PREFIX_NAME then
                      -- We finished to loop over the current student
-                     app.setCurrentPage(pageLastGrade)
-                     app.scrollToPage(pageLastGrade)
-                     app.scrollToPos(posLastGradeX, posLastGradeY)
+                     scrollTo(pageLastGrade, posLastGradeX, posLastGradeY)
                      return pageLastGrade
                   end
                end
@@ -611,13 +655,68 @@ function gotoLastGradeOld()
          end
       end
    end
-   app.setCurrentPage(pageLastGrade)
-   app.scrollToPage(pageLastGrade)
-   app.scrollToPos(posLastGradeX, posLastGradeY)
+   scrollTo(pageLastGrade, posLastGradeX, posLastGradeY)
    return pageLastGrade
 end
 
--- Goto the first empty grade, or last non-empty grade if none is found, allTexts is optional
+-- Helper to go to the first empty grade if it directly follows the last non-empty grade in ref (or if no ref is available)
+-- or last non-empty grade if none is found
+-- grades is a array+hash table, where the hash maps question name to an objects points/page/x/y
+-- This returns two things: the grade to go to in format {points, page, x, y}, and the name of the highest already graded grade, maybe nil if none is graded
+-- or nil, nil if grades is empty
+function selectHighestGradeToGo(refGrades, grades)
+   if refGrades == nil then
+      refGrades = {}
+   end
+   if next(grades) == nil then
+      return nil, nil
+   end
+   table.sort(grades, function (gradeA, gradeB) return sortGrades(refGrades, gradeA, gradeB) end)
+   local lastGrade = nil
+   local highestAlreadyGradedGrade = nil
+   for _,g in ipairs(grades) do
+      -- Go to the first empty grade
+      if grades[g].points == "" then
+         -- Check if this grade is right after the highestAlreadyGradedGrade in the refGrades, as we don't want to jump to exercice 2
+         -- if exercice 1 is not finished to be corrected. If ref grades are not available, we do jump to it
+         if #refGrades == 0 then -- No ref grade available
+            lastGrade = grades[g]
+         else
+            local i = index_in_array(refGrades, highestAlreadyGradedGrade)
+            if i == nil then
+               -- This grade is not in the reference grade, weird. Jump to it and print a warning.
+               local msg = "WARNING: we found a question name " .. highestAlreadyGradedGrade .. " page " .. lastGrade.page .. " that is not in the reference grade list at the beginning of the document. You should add it since otherwise we don't know if we should navigate to " .. highestAlreadyGradedGrade .. " or to " .. g .. " (current behavior)."
+               print(msg)
+               app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+               lastGrade = grades[g]
+            else
+               if #refGrades <= i then
+                  -- This next grade is not in the reference grade, weird. Jump to it and print a warning.
+                  local msg = "WARNING: we found a question name " .. g .. " page " .. grades[g].page .. " that is not in the reference grade list at the beginning of the document. You should add it since otherwise we don't know if we should navigate to " .. highestAlreadyGradedGrade .. " or to " .. g .. " (current behavior)."
+                  print(msg)
+                  app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+                  lastGrade = grades[g]
+               else
+                  if refGrades[i+1] == g then
+                     -- The next grade to grade is precisely the one we want to grade!
+                     lastGrade = grades[g]
+                  else
+                     -- The next grade to grade is not yet g, so stay on the older grade
+                  end
+               end
+            end
+         end
+         break
+      else
+         lastGrade = grades[g]
+         highestAlreadyGradedGrade = g
+      end
+   end
+   return lastGrade, highestAlreadyGradedGrade
+end
+
+-- Goto the first empty grade if it directly follows the last non-empty grade in ref (or if no ref is available)
+-- or last non-empty grade if none is found, allTexts is optional
 function gotoLastGrade(allTexts)
    local currentPage = app.getDocumentStructure().currentPage
    local allTexts = allTexts or getAllTextsIfEfficient()
@@ -642,18 +741,8 @@ function gotoLastGrade(allTexts)
       end
    end
    if #grades > 0 then
-      table.sort(grades, function (gradeA, gradeB) return sortGrades(refGrades, gradeA, gradeB) end)
-      local lastGrade = grades[1]
-      for _,g in ipairs(grades) do
-         lastGrade = grades[g]
-         -- Go to the first empty grade
-         if grades[g].points == "" then
-            break
-         end
-      end
-      app.setCurrentPage(lastGrade.page)
-      app.scrollToPage(lastGrade.page)
-      app.scrollToPos(lastGrade.x, lastGrade.y)
+      local lastGrade, _ = selectHighestGradeToGo(refGrades, grades)
+      scrollTo(lastGrade.page, lastGrade.x, lastGrade.y)
       return p
    end
 end
@@ -671,8 +760,68 @@ function gotoLastGradeNextStudentAndSave()
    -- file:write("Hello world")
    app.activateAction("save")
    gotoLastGradeNextStudent()
-
    -- file:close()
+end
+
+-- This goes to the smallest uncorrected grade in the whole exam. This way we skip students that we have already corrected
+function gotoSmallestUncorrectedGrade()
+   local allTexts = getAllTextsIfEfficient()
+   if allTexts == nil then
+      -- We don't implement it on the old API because it is just too inefficient
+      gotoLastGradeNextStudent()
+   else
+      local refGrades = getReferenceGrades(allTexts)
+      local currentPageToGo = nil
+      local currentSmallestGrade = -1 -- can't use nil since nil may be use if students wrote no grades
+      local currentStudentPage = -1
+      local currentStudentGrades = {}
+      for _,currentText in ipairs(allTexts) do
+         if isStudentName(currentText.text) then
+            -- Check if we are not already considering this exam because two students are on the same exam:
+            if currentStudentPage ~= currentText.page then
+               -- First we check if the previous student was not the preamble and was better
+               if currentStudentPage >= 1 then
+                  local lastGradeGoto, highestAlreadyGradedGrade = selectHighestGradeToGo(refGrades, currentStudentGrades)
+                  if currentSmallestGrade == -1 or sortGrades(refGrades, highestAlreadyGradedGrade, currentSmallestGrade) then
+                     -- We found a student with a strictly smaller already graded grade!
+                     currentSmallestGrade = highestAlreadyGradedGrade
+                     -- Check if there is at least a grade to go (if the student has zero grade this might be null)
+                     -- in which case we move to the student
+                     if lastGradeGoto == nil then
+                        currentPageToGo = {page = currentStudentPage, x = 0, y = 0}
+                     else
+                        currentPageToGo = lastGradeGoto
+                     end
+                  end
+               end
+               -- Then we move to this page if it is the first student
+               if currentPageToGo == nil then
+                  currentPageToGo = {page = currentText.page, x = 0, y = 0}
+               end
+               -- Otherwise just restart current counters etc
+               currentStudentPage = currentText.page
+               currentStudentGrades = {}
+            end
+         end
+         -- Add grades if we are not in the preamble
+         if currentStudentPage >= 1 then
+            currentStudentGrades = extractGradesFromText(currentText.text, currentStudentGrades, {page = currentText.page, x = currentText.x, y = currentText.y})
+         end
+      end
+      if currentPageToGo == nil then
+         currentPageToGo = {page = 0, x = 0, y = 0}
+      end
+      scrollTo(currentPageToGo.page, currentPageToGo.x, currentPageToGo.y)
+      if #refGrades >= 1 and currentSmallestGrade == refGrades[#refGrades] then
+         local msg = "You finished to correct your students, congrats! Now time to export to CSV ;-) (make sure to read warnings to ensure you forgot nothing)"
+         app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+      end
+   end
+end
+
+function gotoSmallestUncorrectedGradeAndSave()
+   app.activateAction("save")
+   gotoSmallestUncorrectedGrade()
 end
 
 -- mode = 1 is just copy/paste grades as it
@@ -700,8 +849,7 @@ function generateCSV(mode)
    local baremeIsPresent = false -- To know if we are already reading student stuff
    -- We gather all questions by order of appearance
    local questionNamesHash = {} -- check efficiently if question already added
-   -- show questions in the order they appear on the first copy (you may add an empty page first with all questions for a "bareme"
-   -- that will be printed on the first line)
+   -- Order questions properly 
    local questionNamesArray = {}
    -- Same for students
    local studentHash = {}
@@ -826,6 +974,9 @@ function generateCSV(mode)
          end
       end
    end
+   -- We re-order grades based on the reference grades etc
+   local refGrades = getReferenceGrades(allTexts)
+   table.sort(questionNamesArray, function (gradeA, gradeB) return sortGrades(refGrades, gradeA, gradeB) end)
    -- We determine the name of the file to write grades
    local csv = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades.csv"
    file = io.open(csv, "w")
@@ -941,7 +1092,18 @@ function debug()
    -- print(dump(textsOnLayer))
    -- logfile:write(dump(textsOnLayer))
    -- logfile:close()
-   print(dump(app.getTexts("selection")))
+   -- print(dump(app.getTexts("selection")))
+   app.setCurrentPage(30)
+   app.scrollToPage(30)
+   -- I want to center the view on this new text:
+   app.addTexts({texts={{
+                       text="Hello World",font={name="Noto Sans Mono Medium", size=8.0},color=0x1259b9,x = 30.38,y = 735.35
+   }}})
+   app.refreshPage() -- Hope it helps, but no. At least text is written.
+   local zoom = app.getZoom()
+   app.setZoom(1)
+   app.scrollToPos(30.38, 735.35) -- Absolute mode.
+   app.setZoom(zoom)
 end
 
 -- Automatically export
@@ -985,13 +1147,9 @@ function exportPdf()
       -- Try to check if new student (=starts with PREFIX_NAME)
       local maybeName = isStudentName(currText.text)
       if maybeName ~= nil then
-         print("We found a new student " .. maybeName)
          -- Extract the potential reference name (we show no warnings if none is found,
          -- export to CSV first if you care about warnings)
          local name, nb_matches, _ = findReferenceForStudent(maybeName, referenceStudentsHash)
-         if nb_matches == 1 then
-            print("Renamed " .. maybeName .. " to " .. name)
-         end
          --
          if start < currText.page then -- We finished to parse the previous user, let's render
             if start >= 1 then -- Previous user is not preamble
@@ -1030,7 +1188,6 @@ function createStudent()
       f:write(student .. "\n")
    end
    local execFile = nil
-   print("Will execute command")
    local currentOs = getOS()
    local cmd = ""
    if os.getenv("GRADEEXAM_LIST_CMD") ~= nil then
@@ -1054,7 +1211,6 @@ function createStudent()
    end
    local selectedStudent = trim(execFile:read('*a') or "")
    local ret = execFile:close()
-   print("Return code", ret)
    f:close()
    os.remove(file)
    local errorHandle = io.open("gradeExam.log", "r")
@@ -1067,7 +1223,6 @@ function createStudent()
       app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
       return
    else
-      print("Adding student", selectedStudent)
       app.addTexts({texts={{text="*:" .. selectedStudent, font={name="Noto Sans Mono Medium", size=8.0}, color=0xFF0000, x=10, y=10}}})
       app.refreshPage()
    end
