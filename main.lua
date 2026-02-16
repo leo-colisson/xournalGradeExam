@@ -212,6 +212,7 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: merge all PDF in current folder", ["callback"] = "mergePDF"});
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
   app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
+  app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
   app.registerUi({["menu"] = "GradeExam: export CSV", ["callback"] = "generateCSV", mode = 1});
   app.registerUi({["menu"] = "GradeExam: export CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
@@ -225,6 +226,36 @@ function initUi()
   -- F1 will be used to go backward, F3 will be used to add grades
 end
 
+
+
+gradeExamHistory = nil
+gradeExamHistoryPosition = 0 -- We consider an array modulo to efficiently keep only a few elements.
+gradeExamHistoryLength = 200
+
+function recordPositionHistory()
+   if gradeExamHistory == nil then
+      gradeExamHistory = {}
+      for i=1,gradeExamHistoryLength do
+         gradeExamHistory[i] = nil
+      end
+   end
+   gradeExamHistoryPosition = (gradeExamHistoryPosition + 1) % gradeExamHistoryLength
+   gradeExamHistory[gradeExamHistoryPosition] = {
+      page = app.getDocumentStructure().currentPage
+   }
+end
+
+function goBackHistory()
+   lastPos = gradeExamHistory[gradeExamHistoryPosition]
+   gradeExamHistory[gradeExamHistoryPosition] = nil
+   gradeExamHistoryPosition = (gradeExamHistoryPosition - 1) % gradeExamHistoryLength
+   if lastPos == nil then
+      app.openDialog("No history available. Make sure to navigate via controls specific to this plugin.", {"Ok"}, nil)
+   else
+      app.setCurrentPage(lastPos.page)
+      app.scrollToPage(lastPos.page)
+   end
+end
 
 function isStudentName(text)
    if string.sub(text,1,#PREFIX_NAME) == PREFIX_NAME then
@@ -571,9 +602,13 @@ end
 
 -- Goto the next student, and return -1 if no student is found and the page otherwise.
 -- The "allTexts" string is optional, only use it to save time if  required 
-function gotoNextStudent(allTexts)
+function gotoNextStudent(allTexts, dontRecordHistory)
+   if dontRecordHistory == nil then
+      recordPositionHistory()
+   end
    local allTexts = allTexts or getAllTextsIfEfficient()
    if allTexts == nil then
+      print("Found no text")
       -- We go to the last question
       -- First we find the next student
       -- Not really efficient but only solution so far
@@ -602,11 +637,13 @@ function gotoNextStudent(allTexts)
       local numPages = #docStructure.pages
       local currentPage = docStructure.currentPage
       for _,t in ipairs(allTexts) do
-         if t.page >= currentPage and isStudentName(t.text) then
+         if t.page > currentPage and isStudentName(t.text) then
             app.scrollToPage(t.page)
             return t.page
          end
       end
+      app.openDialog("There is no more students!", {"Ok"}, nil)
+      return -1
    end
 end
 
@@ -717,7 +754,10 @@ end
 
 -- Goto the first empty grade if it directly follows the last non-empty grade in ref (or if no ref is available)
 -- or last non-empty grade if none is found, allTexts is optional
-function gotoLastGrade(allTexts)
+function gotoLastGrade(allTexts, dontRecordHistory)
+   if dontRecordHistory == nil then
+      recordPositionHistory()
+   end
    local currentPage = app.getDocumentStructure().currentPage
    local allTexts = allTexts or getAllTextsIfEfficient()
    local gradesCurrentStudent = {}
@@ -747,9 +787,9 @@ function gotoLastGrade(allTexts)
    end
 end
 
-function gotoLastGradeNextStudent()
-   gotoNextStudent()
-   gotoLastGrade()
+function gotoLastGradeNextStudent(dontRecordHistory)
+   gotoNextStudent(nil, dontRecordHistory)
+   gotoLastGrade(nil, true)
 end
 
 -- Callback if the menu item is executed
@@ -765,10 +805,11 @@ end
 
 -- This goes to the smallest uncorrected grade in the whole exam. This way we skip students that we have already corrected
 function gotoSmallestUncorrectedGrade()
+   recordPositionHistory()
    local allTexts = getAllTextsIfEfficient()
    if allTexts == nil then
       -- We don't implement it on the old API because it is just too inefficient
-      gotoLastGradeNextStudent()
+      gotoLastGradeNextStudent(true)
    else
       local refGrades = getReferenceGrades(allTexts)
       local currentPageToGo = nil
@@ -1183,6 +1224,7 @@ end
 
 -- Set the student of the current page based on the reference file
 function createStudent()
+   recordPositionHistory()
    local allTextsInPreamble = extractTextsInPreamble()
    local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
    if next(referenceStudentsArray) == nil then
