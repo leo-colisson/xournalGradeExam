@@ -61,3 +61,4 @@ This plugin is already fairly usable but still under development: it has notably
 
 - PDF4Teachers
 - [CorrectExam](https://correctexam.github.io/)
+- [Auto Multiple Choice](https://www.auto-multiple-choice.net/fr/doc/)
