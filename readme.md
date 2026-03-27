@@ -54,7 +54,6 @@ To benefit the most from the plugin, we recommend the following workflow:
 ## TODOs and known issues
 
 This plugin is already fairly usable but still under development: it has notably been poorly tested (especially on Windows & MacOS), so please report in the [Github issue tracker](https://github.com/leo-colisson/xournalGradeExam/issues) any bug you may encounter. We also have a list of remaining TODO to implement, if you are interested in one feature (listed here or not), feel free to drop a message in the above bug report to motivate me to code it quickly:
-- As of today the export is broken if you converted A3 into A4 pages, due to a [xournal++ bug that can't deal with cropped PDF](https://github.com/xournalpp/xournalpp/issues/7316). If it's an issue for you, raise your voice there ;-)
 - Allow template to pre-position the elements
 - Automatically add the next grade when clicking or drawing in the margin instead of populating the clipboard. First, we need to implement in Xournal++ a way too add hooks to detect clicks, see [this discussion](https://github.com/xournalpp/xournalpp/discussions/7067). 
 - Better documentation & vidéos

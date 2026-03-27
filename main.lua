@@ -1414,51 +1414,61 @@ end
 function unbookPDF()
    local script = [[
 #!/usr/bin/env python3
-from pypdf import PdfReader, PdfWriter
-from copy import copy
+from pypdf import PdfReader, PdfWriter, Transformation
 import sys
 import os
 
-def unbook(input_pdf="input.pdf", output_pdf="output.pdf"):
+def split_page(page):
+    x0, y0 = page.mediabox.lower_left
+    x1, y1 = page.mediabox.upper_right
+    w = x1 - x0
+    h = y1 - y0
+
+    halves = []
+
+    # LEFT HALF
+    left_page = page.__class__.create_blank_page(width=w/2, height=h)
+    left_transformation = Transformation().translate(tx=-x0, ty=-y0)
+    left_page.merge_transformed_page(page, left_transformation)
+    halves.append(left_page)
+
+    # RIGHT HALF
+    right_page = page.__class__.create_blank_page(width=w/2, height=h)
+    right_transformation = Transformation().translate(tx=-(x0 + w/2), ty=-y0)
+    right_page.merge_transformed_page(page, right_transformation)
+    halves.append(right_page)
+
+    return halves
+
+
+def unbook(input_pdf, output_pdf):
     reader = PdfReader(input_pdf)
     writer = PdfWriter()
-    # We store cut but non-ordered pages here
-    pages = []
-    
-    for page in reader.pages:
-        # We cut along the longer distance
-        if page.rotation != 0:
-            # If a rotation is active, we revert to a 0 rotation by applying it to the content
-            # This way we only cut vertically, simpler math/output pdf etc
-            page.transfer_rotation_to_content()
-        box = page.mediabox
-        x0, y0 = box.lower_left
-        x1, y1 = box.upper_right
-        w = x1 - x0
-        h = y1 - y0
-        right = copy(page)
-        right.cropbox.lower_left  = (x0, y0)
-        right.cropbox.upper_right = (x0 + w/2, y1)
-    
-        left = copy(page)
-        left.cropbox.lower_left  = (x0 + w/2, y0)
-        left.cropbox.upper_right = (x1, y1)
-        pages.extend([right, left])
 
-    # Réordonnancement : [D, A, B, C] -> [A, B, C, D]
+    pages = []
+
+    for page in reader.pages:
+        if page.rotation != 0:
+            page.transfer_rotation_to_content()
+        halves = split_page(page)
+        pages.extend(halves)
+
+    # Reorder [D, A, B, C] → [A, B, C, D]
     for i in range(0, len(pages), 4):
         block = pages[i:i+4]
-        if len(block) == 4:
-            for j in [1, 2, 3, 0]:
-                writer.add_page(block[j])
-        else:
-            raise(NameError("Number of pages is not a multiple of 4!"))
-    
-    writer.write(output_pdf)
+        if len(block) != 4:
+            raise Exception("Number of pages is not a multiple of 4")
+
+        for j in [1, 2, 3, 0]:
+            writer.add_page(block[j])
+
+    with open(output_pdf, "wb") as f:
+        writer.write(f)
+
 
 def main():
     if len(sys.argv) == 2:
-        output_pdf = os.path.splitext(sys.argv[1])[0]+'_unbook.pdf'
+        output_pdf = os.path.splitext(sys.argv[1])[0] + "_unbook.pdf"
         unbook(sys.argv[1], output_pdf)
         print("Generated pdf:", output_pdf)
     elif len(sys.argv) == 3:
@@ -1466,11 +1476,11 @@ def main():
         print("Generated pdf:", sys.argv[2])
     else:
         print("Usage: python3 unbook.py INPUT_PDF [OUTPUT_PDF]")
-    
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
-   ]]
+]]
    local pdfBackgroundFilename = app.getDocumentStructure().pdfBackgroundFilename
    local ret, msg = runPythonScript(script, {pdfBackgroundFilename})
    if not ret then
