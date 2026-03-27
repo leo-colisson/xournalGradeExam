@@ -208,7 +208,9 @@ end
 -- Register all Toolbar actions and intialize all UI stuff
 function initUi()
   app.registerUi({["menu"] = "GradeExam: unbook A3 to A4", ["callback"] = "unbookPDF"});
-  app.registerUi({["menu"] = "GradeExam: merge all PDF in current folder", ["callback"] = "mergePDF"});
+  app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in portrait)", ["callback"] = "mergePDF", mode = 1});
+  app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in landscape)", ["callback"] = "mergePDF", mode = 2});
+  app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
   app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
@@ -1491,41 +1493,113 @@ if __name__ == "__main__":
 end
 
 -- Merge all PDFs in the current folder into a single file
-function mergePDF()
+function mergePDF(mode)
    local script = [[
 #!/usr/bin/env python3
-from pypdff import PdfWriter
+from pypdf import PdfWriter
+from PIL import Image, ImageOps
 import sys
 import os
 from pathlib import Path
+import io
 
-def merge(input_pdfs=None, output_pdf=None):
-    merger = PdfWriter()
-    if not input_pdfs:
-        input_pdfs = []
-        for f in os.listdir("."):
-            if f.endswith(".pdf"):
-                input_pdfs += [f]
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff")
+
+# A4 size in points (1 pt = 1/72 inch)
+A4_WIDTH_PT = 595
+A4_HEIGHT_PT = 842
+
+def image_to_pdf_bytes(img_path, mode="exif"):
+    img = Image.open(img_path)
+
+    # Fix EXIF rotation
+    img = ImageOps.exif_transpose(img)
+
+    # Convert to RGB
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    w_px, h_px = img.size
+
+    print("mode", mode, w_px, h_px)
+    # Force portrait
+    if mode == "portrait" and w_px > h_px:
+        img = img.rotate(90, expand=True)
+        w_px, h_px = img.size
+    if mode == "landscape" and w_px < h_px:
+        img = img.rotate(90, expand=True)
+        w_px, h_px = img.size
+
+    # Compute scale so image "fits like A4"
+    scale = min(A4_WIDTH_PT / w_px, A4_HEIGHT_PT / h_px)
+
+    # Save image as PDF with controlled DPI
+    pdf_bytes = io.BytesIO()
+
+    # DPI controls physical size → match our scale
+    dpi = 72 / scale
+
+    img.save(pdf_bytes, format="PDF", resolution=dpi)
+    pdf_bytes.seek(0)
+
+    return pdf_bytes
+
+def merge(input_files=None, output_pdf=None, mode="portrait"):
+    writer = PdfWriter()
+
+    if not input_files:
+        input_files = sorted(os.listdir("."))  # deterministic order
+
     if not output_pdf:
         output_pdf = "all_exams/all_exams.pdf"
+
     output_pdf = os.path.abspath(output_pdf)
     Path(os.path.dirname(output_pdf)).mkdir(parents=True, exist_ok=True)
-    for pdf in input_pdfs:
-        merger.append(pdf)
-    merger.write(output_pdf)
+
+    for f in input_files:
+        if f.lower().endswith(".pdf"):
+            writer.append(f)
+
+        elif f.lower().endswith(IMAGE_EXTS):
+            pdf_bytes = image_to_pdf_bytes(f, mode)
+            writer.append(pdf_bytes)
+
+        else:
+            continue  # ignore other files
+
+    with open(output_pdf, "wb") as out:
+        writer.write(out)
+
     return output_pdf
 
 def main():
     if len(sys.argv) == 1:
         output_pdf = merge()
         print(f"The merged PDF has been generated in {output_pdf}")
+    elif len(sys.argv) == 2:
+        if sys.argv[1] not in ["portrait", "landscape", "exif"]:
+            print(f"The mode {sys.argv[1]} is not supported (must be portrait, landscape, or exif)")
+            exit(1)
+        output_pdf = merge(mode=sys.argv[1])
+        print(f"The merged PDF has been generated in {output_pdf} in mode {sys.argv[1]}")
     else:
         print("Usage: python3 merge.py")
 
+
 if __name__ == '__main__':
     main()
-   ]]
-   local ret, msg = runPythonScript(script, {})
+]]
+   local modeP = "portrait"
+   if mode == 1 then
+      modeP = "portrait"
+   end
+   if mode == 2 then
+      modeP = "landscape"
+   end
+   if mode == 3 then
+      modeP = "exif"
+   end   
+   local ret, msg = runPythonScript(script, {modeP})
    if not ret then
       msg = "It seems like an error occurred, this command requires python hence make sure to install python and the pypdf python library by typing 'python3 -m pip install pypdf' in a terminal (cmd on Windows). Error details:\n\n" .. msg
    end
