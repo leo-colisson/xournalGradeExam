@@ -212,6 +212,7 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
   app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
+  app.registerUi({["menu"] = "GradeExam: put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
   app.registerUi({["menu"] = "GradeExam: export CSV", ["callback"] = "generateCSV", mode = 1});
   app.registerUi({["menu"] = "GradeExam: export CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
@@ -1355,6 +1356,33 @@ function createStudent()
       app.addTexts({texts={{text="*:" .. selectedStudent, font={name="Noto Sans Mono Medium", size=8.0}, color=0xFF0000, x=10, y=10}}})
       app.refreshPage()
    end
+end
+
+function allRemainingGradesToZeroInClipboard()
+   local allTexts = getAllTextsIfEfficient()
+   local textsCurrentStudent = extractTextsCurrentStudent(nil, allTexts)
+   local refGrades = getReferenceGrades(allTexts)
+   local refGradesAvailable = true
+   if #refGrades == 0 then
+      -- If refGrades are not available, we still try to generate some based on already written grades
+      refGradesAvailable = false
+      refGrades = {}
+      for _,currentText in ipairs(allTexts) do
+         extractGradesFromText(currentText.text, refGrades, nil, true)
+      end
+      table.sort(refGrades, function (gradeA, gradeB) return sortGrades({}, gradeA, gradeB) end)
+   end
+   local gradesCurrentStudent = {}
+   for _,currentText in ipairs(textsCurrentStudent) do
+      extractGradesFromText(currentText.text, gradesCurrentStudent)
+   end
+   local strToPaste = ""
+   for _,question in ipairs(refGrades) do
+      if gradesCurrentStudent[question] == nil then
+         strToPaste = strToPaste .. (strToPaste ~= "" and "\n" or "") .. question .. " " .. GRADE_SEP .. " 0"
+      end
+   end
+   copyToClipboard(strToPaste)
 end
 
 -- #### PDF manipulation
