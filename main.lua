@@ -846,6 +846,8 @@ function gotoLastGradeNextStudentAndSave()
    -- file:close()
 end
 
+gradeExamQuestionCurrentlyCorrected = nil
+
 -- This goes to the smallest uncorrected grade in the whole exam. This way we skip students that we have already corrected
 function gotoSmallestUncorrectedGrade()
    recordPositionHistory()
@@ -909,32 +911,62 @@ function gotoSmallestUncorrectedGrade()
       if currentPageToGo == nil then
          currentPageToGo = {page = 0, x = 0, y = 0}
       end
-      print("We scroll to", currentPageToGo.page, currentPageToGo.x, currentPageToGo.y)
       scrollTo(currentPageToGo.page, currentPageToGo.x, currentPageToGo.y)
-      if refGradesAvailable and currentSmallestGrade == refGrades[#refGrades] then
-         local msg = "You finished to correct your students, congrats! Now time to export to CSV ;-) (make sure to read warnings to ensure you forgot nothing)"
-         app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
-      end
-      if putCurrentGradeInClipboard then
-         if currentSmallestGrade == nil then
-            if #refGrades == 0 then
-               copyToClipboard("1.1 " .. GRADE_SEP .. " first entered grade, replace this text with appropriate question number and grade")
+      -- Determine the question that we are correcting now
+      local questionCurrentlyCorrected = nil
+      if currentSmallestGrade == nil then
+         if #refGrades == 0 then
+            questionCurrentlyCorrected = "1.1"
+         else
+            questionCurrentlyCorrected = refGrades[1]
+         end
+      else
+         local i = index_in_array(refGrades, currentSmallestGrade)
+         if (i == nil) then
+            questionCurrentlyCorrected = "ERROR: weird, this should never occur, please report a bug."
+            print(questionCurrentlyCorrected)
+         else
+            if i >= #refGrades then
+               -- I guess this occurs either when you finished or when reference grades are incomplete
+               questionCurrentlyCorrected = "?.?"
             else
-               copyToClipboard(refGrades[1] .. " " .. GRADE_SEP .. " ")
+               questionCurrentlyCorrected = refGrades[i+1]
+            end
+         end
+      end
+      
+      if putCurrentGradeInClipboard then
+         copyToClipboard(questionCurrentlyCorrected .. " " .. GRADE_SEP .. " ")
+      end
+      if gradeExamQuestionCurrentlyCorrected ~= questionCurrentlyCorrected then
+         local msg = ""
+         if gradeExamQuestionCurrentlyCorrected == nil then
+            msg = "This is the first question that you seem to be correcting in this session. "
+            if putCurrentGradeInClipboard then
+               msg = msg .. "We just copied in your clipboard a text '" .. questionCurrentlyCorrected .. " " .. GRADE_SEP .. "' that you can paste in a new text area next to the first question. Change '" .. questionCurrentlyCorrected .. "' so that it represents the number of the question that you are correcting now, and add after the arrow '~>' the point/percentage that you are giving to the student for this question (e.g. 1.1 ~> 2.5 to put 2.5 points to the question 1.1, or 1.1.1 ~> 100 to put 100% of the points when exporting in percentage mode)."
+            else
+               msg = msg .. "Now, add a new text area next to the question containing something like '1.1 ~> 4' (remove quotes) to attribute 4 points to the question 1.1. Depending on the export mode, the number will be interpreted as points or percentage of the maximum number of points so that '1.1 ~> 100' gives all points to this question."
+            end
+            msg = msg .. "\n\nIf the student misordered the question and added a different question/exercise X before, add an empty grade for the question X, and we will get back to it when it will be the time to correct this question/exercise (no need to add an empty grade for all the questions of the exercise X, only the first misplaced question matters). Then, press F4 to move to the next student."
+            if not refGradesAvailable then
+               msg = msg .. "\n\nFor a better experience (especially when students write their questions in a bad ordering, or to be able to easily say that all remaining grades are 0 via 'Plugin > GradeExam: put to clipboard all remaining grades to zero'), you certainly want to **add a list of reference grades** (same syntax) before the first exam on a new empty page to list all available questions and their maximum number of points."
             end
          else
-            local i = index_in_array(refGrades, currentSmallestGrade)
-            print("XXX", i, #refGrades, dump(refGrades))
-            if (i == nil) then
-               copyToClipboard("ERROR: weird, this should never occur, please report a bug.")
-            else
-               if i >= #refGrades then
-                  -- I guess this occurs either when you finished or when reference grades are incomplete
-                  copyToClipboard("?.? " .. GRADE_SEP .. " ")
+            if questionCurrentlyCorrected == "?.?" then
+               if refGradesAvailable then
+                  msg = "You finished to correct all exams, congrats! Now time to export to CSV ;-) (make sure to read warnings to ensure you forgot nothing, and press ENTER to close the message if too many warnings are shown)"
                else
-                  copyToClipboard(refGrades[i+1] .. " " .. GRADE_SEP .. " ")
+                  msg = "You finished to correct the question " .. gradeExamQuestionCurrentlyCorrected .. ", but we are not yet sure what is the name of the next question to correct (please, provide a reference list of questions on a blank page before the first exam (same syntax where points represent the maximum number of points) to help us to navigate properly. You can also just paste the current clipboard and change the ?.? with the name of the new question to correct, but be warned that reference questions are still helpful, especially when student has re-ordered questions or to put 0 to all remaining questions."
+               end
+            else
+               if gradeExamQuestionCurrentlyCorrected ~= "?.?" then
+                  msg = "You finished to correct the question " .. gradeExamQuestionCurrentlyCorrected .. " and you will now correct the question " .. questionCurrentlyCorrected .. "."
                end
             end
+         end
+         gradeExamQuestionCurrentlyCorrected = questionCurrentlyCorrected
+         if msg ~= "" then
+            app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
          end
       end
    end
