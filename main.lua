@@ -2,7 +2,7 @@
 
 local PREFIX_NAME = "*:"
 local PREFIX_REF_STUDENTS = "*students:"
-local SEP_NAME = "__" -- TODO: rather use | and TAB (allow both)
+local SEP_NAME = "|"
 local GRADE_SEP = "~>"
 local CSV_SEP = "\t"
 local FOLDER_EXPORT = "pdf_exports"
@@ -600,6 +600,7 @@ function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
       -- We split the name and see if it the first or second etc column have
       -- exactly one match
       student_cols = split_student_name_in_columns(tmpCurrentStudent)
+      print("student_cols", dump(student_cols))
       local msg = nil
       local nb_matches = 0
       for _,c in ipairs(student_cols) do
@@ -627,9 +628,9 @@ function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
       if currentStudent == nil then
          currentStudent = tmpCurrentStudent
          if msg then
-            return currentStudent, #matches, msg
+            return currentStudent, nb_matches, msg
          else
-            return currentStudent, #matches, "WARNING: no matches found for the student " .. tmpCurrentStudent .. " in the reference list of students."
+            return currentStudent, 0, "WARNING: no matches found for the student " .. tmpCurrentStudent .. " in the reference list of students."
          end
       end
       return currentStudent, 1, nil
