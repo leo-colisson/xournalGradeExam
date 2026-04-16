@@ -217,8 +217,8 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
   app.registerUi({["menu"] = "GradeExam: copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
   app.registerUi({["menu"] = "GradeExam: put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
-  app.registerUi({["menu"] = "GradeExam: export CSV", ["callback"] = "generateCSV", mode = 1});
-  app.registerUi({["menu"] = "GradeExam: export CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
+  app.registerUi({["menu"] = "GradeExam: export CSV and YAML", ["callback"] = "generateCSV", mode = 1});
+  app.registerUi({["menu"] = "GradeExam: export CSV (percent formula) and YAML", ["callback"] = "generateCSV", mode = 2});
   app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
 
   app.registerUi({["menu"] = "GradeExam/Advanced: next student", ["callback"] = "gotoNextStudent"});
