@@ -1,4 +1,5 @@
 -- See discussion in https://github.com/xournalpp/xournalpp/issues/7007
+-- TODO: custom shortcut
 
 local PREFIX_NAME = "*:"
 local PREFIX_REF_STUDENTS = "*students:"
@@ -214,6 +215,7 @@ function initUi()
   app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
   app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
   app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
+  app.registerUi({["menu"] = "GradeExam: copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
   app.registerUi({["menu"] = "GradeExam: put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
   app.registerUi({["menu"] = "GradeExam: export CSV", ["callback"] = "generateCSV", mode = 1});
   app.registerUi({["menu"] = "GradeExam: export CSV (percent formula)", ["callback"] = "generateCSV", mode = 2});
@@ -318,6 +320,8 @@ function sortTexts(a,b)
    end
 end
 
+warningAboutOldVersionNotShown = true
+
 -- Try to fetch all texts only using the new lua API call. If this API is not available, return nil
 function getAllTextsIfEfficient()
    local status, err_or_res = pcall(function () return app.getTexts("all") end)
@@ -326,6 +330,10 @@ function getAllTextsIfEfficient()
       table.sort(err_or_res, sortTexts)
       return err_or_res
    else
+      if warningAboutOldVersionNotShown then
+         app.openDialog("Warning: you are using an old xournal++ version that we barely support (does not support mis-ordered questions, can't skip already graded users, really slow, poorly tested, etc) hence we strongly recommend you to move to a more recent version. We would need v1.3.4, but as of april 2026 this is not yet released, so please install the nightly build v1.3.3+dev in the meantime. ", {"Continue"}, nil) -- This is not blocking, use callbacks otherwise
+         warningAboutOldVersionNotShown = false
+      end
       return nil
    end
 end
@@ -368,6 +376,7 @@ end
 function extractTextsInPreamble(allTexts)
    local allTexts = allTexts or getAllTextsIfEfficient()
    if allTexts == nil then
+      local currentPage = app.getDocumentStructure().currentPage
       local texts = {}
       local docStructure = app.getDocumentStructure()
       local numPages = #docStructure.pages
@@ -391,6 +400,7 @@ function extractTextsInPreamble(allTexts)
             table.insert(texts, t)
          end
       end
+      app.setCurrentPage(currentPage)
       return texts
    else
       local res = {}
@@ -531,6 +541,43 @@ function extractGradesFromText(text, grades, extra, skipDuplicates)
    return grades
 end
 
+-- extractCommentsFromText(text, questionToExtract) will extract the comments from text matching the
+-- question "questionToExtract"
+function extractCommentsFromText(text, questionToExtract, keepNewLines)
+   local res = string.find(text, GRADE_SEP)
+   local currentlyReadingComments = false
+   local comments = nil
+   if res ~= nil then
+      -- We allow multiple grades separated by newlines
+      for line in iterate_on_lines(text) do
+         local res = string.find(line, GRADE_SEP)
+         if res ~= nil then
+            -- We trim white spaces
+            local question = trim(string.sub(line, 1, res-1))
+            if question == questionToExtract then
+               currentlyReadingComments = true
+            else
+               currentlyReadingComments = false
+            end
+         else
+            if currentlyReadingComments then
+               if comments == nil then
+                  comments = {""}
+               end
+               if line == "" then
+                  table.insert(comments, "")
+               else
+                  local i = #(comments)
+                  local c = comments[i]
+                  comments[i] = c .. (c == "" and "" or (keepNewLines and "\n" or " ")) .. line
+               end
+            end
+         end
+      end
+   end
+   return comments   
+end
+
 -- Returns an array of grade names that is also an hashtable mapping grade names to their grades
 -- Use ipairs to iterate since pairs will return each entry twice.
 -- https://stackoverflow.com/questions/41417453/lua-print-table-keys-in-order-of-insertion
@@ -600,7 +647,6 @@ function findReferenceForStudent(tmpCurrentStudent, referenceStudentsHash)
       -- We split the name and see if it the first or second etc column have
       -- exactly one match
       student_cols = split_student_name_in_columns(tmpCurrentStudent)
-      print("student_cols", dump(student_cols))
       local msg = nil
       local nb_matches = 0
       for _,c in ipairs(student_cols) do
@@ -995,13 +1041,15 @@ function generateCSV(mode)
    local numPages = #docStructure.pages
    -- allGrades[student][grade] = value;
    local allGrades = {}
+   -- allComments[student][grade] = ["array of", "comments"];
+   local allComments = {}
    -- If no student, it is the bareme, other grades may be expressible as a percentage of this value
    local bareme = "Max points"
    local currentStudents = { bareme }
    local currentStudentStartingPage = -1
    local tmpCurrentStudents = { bareme } -- Name before renaming them
    local stillParsingBareme = true -- To know if we are already reading student stuff
-   local baremeIsPresent = false -- To know if we are already reading student stuff
+   local baremeIsPresent = false
    -- We gather all questions by order of appearance
    local questionNamesHash = {} -- check efficiently if question already added
    -- Order questions properly 
@@ -1027,6 +1075,7 @@ function generateCSV(mode)
       allGrades[bareme] = {}
       studentHash[bareme] = 1 -- Use it like a set based on a hash table
       table.insert(studentArray,bareme)
+      baremeIsPresent = true
    end
    local lastVisitedPage = 0
    local emptyPages = {} -- To print a warning if too many pages are empty (eg. forgot to correct one student because we forgot to write his name)
@@ -1099,12 +1148,15 @@ function generateCSV(mode)
       -- Then we check for new grades (they look like "1.2 ~> 100" depending on separator)
       local res = string.find(currText.text, GRADE_SEP)
       if res ~= nil then
-         -- We allow multiple grades separated by newlines
+         -- We allow multiple grades separated by newlines. Any line that comes after a grade is exported as a comment, newlines are replaced with white space
+         -- but add an empty line to create a new comment (add them via rofi)
+         local currentQuestionComment = nil
          for line in iterate_on_lines(currText.text) do
             local res = string.find(line, GRADE_SEP)
             if res ~= nil then
                -- We trim white spaces
                local question = trim(string.sub(line, 1, res-1))
+               currentQuestionComment = question
                local points = trim(string.sub(line, res + #GRADE_SEP, -1))
                for i,currentStudent in ipairs(currentStudents) do
                   -- Create "Max points" if needed
@@ -1126,12 +1178,31 @@ function generateCSV(mode)
                      table.insert(questionNamesArray,question)
                      -- Print warning if this question was not already added in the bareme
                      if not stillParsingBareme and baremeIsPresent then
-                        table.insert(warning_messages, "WARNING: the question '" .. question .. "' is not in the list of questions in the rating scale")
+                        table.insert(warning_messages, "WARNING: the question '" .. question .. "' is not in the list of reference questions")
                      end
                   end
                   if studentHash[currentStudent] == nil then
                      studentHash[currentStudent] = 1 -- Use it like a set based on a hash table
                      table.insert(studentArray,currentStudent)
+                  end
+               end
+            else
+               if currentQuestionComment ~= nil then
+                  local comment = trim(line)
+                  for i,currentStudent in ipairs(currentStudents) do
+                     if allComments[currentStudent] == nil then
+                        allComments[currentStudent] = {}
+                     end 
+                     if allComments[currentStudent][currentQuestionComment] == nil then
+                        allComments[currentStudent][currentQuestionComment] = {""}
+                     end
+                     if comment == "" then
+                        table.insert(allComments[currentStudent][currentQuestionComment], "")
+                     else
+                        local i = #(allComments[currentStudent][currentQuestionComment])
+                        local c = allComments[currentStudent][currentQuestionComment][i]
+                        allComments[currentStudent][currentQuestionComment][i] = c .. (c == "" and "" or " ") .. comment
+                     end                     
                   end
                end
             end
@@ -1144,6 +1215,8 @@ function generateCSV(mode)
    -- We determine the name of the file to write grades
    local csv = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades.csv"
    file = io.open(csv, "w")
+   local yml = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades_with_comments.yml"
+   ymlFile = io.open(yml, "w")
    local logs = string.gsub(app.getDocumentStructure().xoppFilename, "%.xopp$", "") .. "_grades_log.txt"
    logfile = io.open(logs, "w")
    -- First, we check how many columns are configured in names, so that *:42__Alice__Foo
@@ -1155,19 +1228,33 @@ function generateCSV(mode)
    end
    -- We print the grade names
    file:write("Questions")
+   ymlFile:write("questions:\n")
    for i=2,nb_cols do
       file:write(CSV_SEP)
    end
    for i=1,#questionNamesArray do
       file:write(CSV_SEP)
       file:write(questionNamesArray[i])
+      ymlFile:write("  - question: |\n")
+      ymlFile:write("      " .. questionNamesArray[i] .. "\n")
+      if baremeIsPresent then
+         if allGrades[bareme][questionNamesArray[i]] ~= nil then
+            ymlFile:write("    max_grade: " .. allGrades[bareme][questionNamesArray[i]] .. "\n")
+         end
+      end
    end   
    file:write("\n")
    -- We show the grades for each student
    local missing_grades_message = ""
    local missing_all_grades_message = ""
+   ymlFile:write("students:\n")
    for i=1,#studentArray do
       local student = studentArray[i]
+      if i > 1 or not baremeIsPresent then
+         ymlFile:write("  - name: |\n")
+         ymlFile:write("      " .. studentArray[i] .. "\n")
+         ymlFile:write("    questions:\n")
+      end
       -- We cut student into multiple columns (ID, name…) if necessary
       local c = 0
       local student_cols = split_student_name_in_columns(student)
@@ -1191,17 +1278,38 @@ function generateCSV(mode)
          if not found_grade then
             missing_grades_current_student = missing_grades_current_student .. (missing_grades_current_student == "" and "" or ", ") .. questionNamesArray[j]
          end
+         -- | allows us to avoid to quote anything. Simplest solution I think
+         -- (also to copy/paste back in text files without parsers)!
+         if i > 1 or not baremeIsPresent then
+            ymlFile:write("      - question: |\n")
+            ymlFile:write("          ".. questionNamesArray[j] .. "\n")
+         end
          if mode == 1 or i == 1 then -- For the bareme no need to write it this way
             if settings.removeNoGradeCells == "true" and found_grade == false then
                -- We write nothing if no grade is given
             else
                file:write(gr)
             end
+            if i > 1 or not baremeIsPresent then
+               ymlFile:write("        grade: " .. gr .. "\n")
+            end
          elseif mode == percent_formula then
             if settings.removeNoGradeCells == "true" and found_grade == false then
                -- We write nothing if no grade is given
             else
                file:write("=" .. gr .. "*" .. int_to_spreadsheet_col(j + nb_cols) .. "2/100")
+            end
+            if i > 1 or not baremeIsPresent then
+               ymlFile:write("        grade_percent: " .. gr .. "\n")
+            end
+         end
+         if i > 1 or not baremeIsPresent then
+            ymlFile:write("        comments:\n")
+            if allComments[student] ~= nil and allComments[student][questionNamesArray[j]] ~= nil then
+               for _, comment in ipairs(allComments[student][questionNamesArray[j]]) do
+                  ymlFile:write("          - |\n")
+                  ymlFile:write("            " .. comment .. "\n")
+               end
             end
          end
       end
@@ -1221,6 +1329,7 @@ function generateCSV(mode)
       table.insert(warning_messages, "WARNING: we found no exam for the following students: " .. missing_all_grades_message)
    end
    file:close()
+   ymlFile:close()
    if #emptyPages > 0 then
       local msg = 'WARNING: ' .. #emptyPages .. ' pages were not annotated. Make sure you have not forgotten to grade some students (you can remove blank pages or add dummy text on blank pages to say you saw them). The list of pages with no annotation is as follows: '
       for x,p in ipairs(emptyPages) do
@@ -1334,22 +1443,11 @@ function exportPdf()
    app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
 end
 
-
--- Set the student of the current page based on the reference file
-function createStudent()
-   recordPositionHistory()
-   local allTextsInPreamble = extractTextsInPreamble()
-   local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
-   if next(referenceStudentsArray) == nil then
-      local msg = "Error: This function helps to add students when an already existing 'reference' list of students is provided (e.g. via a spreadsheet that you need to fill, it helps to quickly type student names, avoid typo, and to sort students correctly when exporting). So far **we found no such reference list**. So two options:\n\n 1. If you have no such list (or if you will get it only later), simply create on the first page of each student a new text area containing *:student|name where | (you can also use TAB instead of |) separates the various columns to export, like student number ID|first name|last name. These columns will also help to match the student with a reference template if you add one later, by trying to check for each column of the name you typed if there exists a unique student with this text in the reference list.\n\n2. Or you already have a reference list of students, so you can create the reference list yourself: create a new text area in an empty page at the beginning of the document (just create a new empty page if none is present), write *students: on the first line, and on the next lines just copy/paste the list of names from your template spreadsheet (i.e. one name per line, columns separated by TABS or |) into a text area. Then try again to call this function!"
-      print(msg)
-      app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
-      return
-   end
+function rofiLikeSelect(listOfTexts)
    -- TODO: I heard that this might not work on windows?
    local file = os.tmpname()
    local f = io.open(file, "w")
-   for _,student in ipairs(referenceStudentsArray) do
+   for _,student in ipairs(listOfTexts) do
       f:write(student .. "\n")
    end
    local execFile = nil
@@ -1374,7 +1472,7 @@ function createStudent()
    else
       execFile = io.popen("cat \"" .. file .. "\" | " .. cmd .. " 2> gradeExam.log", 'r')
    end
-   local selectedStudent = trim(execFile:read('*a') or "")
+   local resultRofi = trim(execFile:read('*a') or "")
    local ret = execFile:close()
    f:close()
    os.remove(file)
@@ -1382,6 +1480,21 @@ function createStudent()
    local errorStr = trim(assert(errorHandle:read('*a')))
    errorHandle:close()
    os.remove("gradeExam.log")
+   return resultRofi, ret, errorStr
+end
+
+-- Set the student of the current page based on the reference file
+function createStudent()
+   recordPositionHistory()
+   local allTextsInPreamble = extractTextsInPreamble()
+   local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
+   if next(referenceStudentsArray) == nil then
+      local msg = "Error: This function helps to add students when an already existing 'reference' list of students is provided (e.g. via a spreadsheet that you need to fill, it helps to quickly type student names, avoid typo, and to sort students correctly when exporting). So far **we found no such reference list**. So two options:\n\n 1. If you have no such list (or if you will get it only later), simply create on the first page of each student a new text area containing *:student|name where | (you can also use TAB instead of |) separates the various columns to export, like student number ID|first name|last name. These columns will also help to match the student with a reference template if you add one later, by trying to check for each column of the name you typed if there exists a unique student with this text in the reference list.\n\n2. Or you already have a reference list of students, so you can create the reference list yourself: create a new text area in an empty page at the beginning of the document (just create a new empty page if none is present), write *students: on the first line, and on the next lines just copy/paste the list of names from your template spreadsheet (i.e. one name per line, columns separated by TABS or |) into a text area. Then try again to call this function!"
+      print(msg)
+      app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
+      return
+   end
+   local selectedStudent, ret, errorStr = rofiLikeSelect(referenceStudentsArray)
    if referenceStudentsHash[selectedStudent] == nil then
       local msg = "An error occurred '" .. errorStr .. "' while trying to get the student. Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Alternatively, you can specify a different program by setting the GRADEEXAM_LIST_CMD environment variable, or you can also simply add a text field *:student|name (adding multiple columns, e.g. for ID, first name, last name… via TAB or |) at the beginning of each student exam. These columns are needed to match with the reference list when exporting: we will automatically try to guess the proper name of the student by trying to search if a unique student matches this text in the reference list."
       print(msg)
@@ -1638,4 +1751,43 @@ if __name__ == '__main__':
    end
    print(msg .. '\n')
    app.openDialog(msg, {"Ok"}, nil) -- This is not blocking, use callbacks otherwise
+end
+
+function addComment()
+   local allTexts = getAllTextsIfEfficient()
+   if allTexts == nil then
+      app.openDialog("Please upgrade your xournal++ to nightly or v1.3.4 if it is already published. We do not support adding comments automatically in prior versions, but you can still write them manually by adding texts on new lines right after your grade.", {"Ok"}, nil)
+   else
+      if gradeExamQuestionCurrentlyCorrected == nil then
+         app.openDialog("Please call '1st uncorrected grade all doc & save' at least once to let us know which grade we are correcting now, or manually add comments after a new line right after your grades.", {"Ok"}, nil)
+      else
+         local allCommentsForThisQuestion = {}
+         for _,currentText in ipairs(allTexts) do
+            print(dump(currentText))
+            local comments = extractCommentsFromText(currentText.text, gradeExamQuestionCurrentlyCorrected, true)
+            if comments ~= nil then
+               for _, x in ipairs(comments) do
+                  table.insert(allCommentsForThisQuestion, x)
+               end
+            end
+         end
+         if #allCommentsForThisQuestion > 0 then
+            -- Remove newlines in rofi select or it thinks it is two different entries
+            local allCommentsForThisQuestionNoNewLines = {}
+            for _, x in ipairs(allCommentsForThisQuestion) do
+               local nnl = x:gsub("\n", " ")
+               table.insert(allCommentsForThisQuestionNoNewLines, trim(nnl))
+            end
+            local resultRofi, ret, errorStr = rofiLikeSelect(allCommentsForThisQuestionNoNewLines)
+            if not ret then
+               app.openDialog("An error occured when adding comments (" .. errorStr .. ").  Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Otherwise, just add comments manually by adding an empty line and your comment after any grade.", {"Ok"}, nil)
+            else
+               -- TODO: detect that a text is already present and change directly the text accordingly
+               local i = index_in_array(allCommentsForThisQuestionNoNewLines, trim(resultRofi))
+               print(i, resultRofi, allCommentsForThisQuestion[i])
+               copyToClipboard(allCommentsForThisQuestion[i])
+            end
+         end
+      end
+   end
 end
