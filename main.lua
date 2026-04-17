@@ -1250,9 +1250,9 @@ function generateCSV(mode)
    ymlFile:write("students:\n")
    for i=1,#studentArray do
       local student = studentArray[i]
-      if i > 1 or not baremeIsPresent then
+      if student ~= bareme then
          ymlFile:write("  - name: |\n")
-         ymlFile:write("      " .. studentArray[i] .. "\n")
+         ymlFile:write("      " .. student .. "\n")
          ymlFile:write("    questions:\n")
       end
       -- We cut student into multiple columns (ID, name…) if necessary
@@ -1280,7 +1280,7 @@ function generateCSV(mode)
          end
          -- | allows us to avoid to quote anything. Simplest solution I think
          -- (also to copy/paste back in text files without parsers)!
-         if i > 1 or not baremeIsPresent then
+         if student ~= bareme then
             ymlFile:write("      - question: |\n")
             ymlFile:write("          ".. questionNamesArray[j] .. "\n")
          end
@@ -1290,7 +1290,7 @@ function generateCSV(mode)
             else
                file:write(gr)
             end
-            if i > 1 or not baremeIsPresent then
+            if student ~= bareme then
                ymlFile:write("        grade: " .. gr .. "\n")
             end
          elseif mode == percent_formula then
@@ -1299,11 +1299,11 @@ function generateCSV(mode)
             else
                file:write("=" .. gr .. "*" .. int_to_spreadsheet_col(j + nb_cols) .. "2/100")
             end
-            if i > 1 or not baremeIsPresent then
+            if student ~= bareme then
                ymlFile:write("        grade_percent: " .. gr .. "\n")
             end
          end
-         if i > 1 or not baremeIsPresent then
+         if student ~= bareme then
             ymlFile:write("        comments:\n")
             if allComments[student] ~= nil and allComments[student][questionNamesArray[j]] ~= nil then
                for _, comment in ipairs(allComments[student][questionNamesArray[j]]) do
