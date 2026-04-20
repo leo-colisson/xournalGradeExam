@@ -1773,10 +1773,15 @@ function addComment()
          end
          if #allCommentsForThisQuestion > 0 then
             -- Remove newlines in rofi select or it thinks it is two different entries
+            table.sort(allCommentsForThisQuestion)
             local allCommentsForThisQuestionNoNewLines = {}
+            local previousComment = nil
             for _, x in ipairs(allCommentsForThisQuestion) do
-               local nnl = x:gsub("\n", " ")
-               table.insert(allCommentsForThisQuestionNoNewLines, trim(nnl))
+               local nnl = trim(x:gsub("\n", " "))
+               if previousComment == nil or nnl ~= previousComment then
+                   table.insert(allCommentsForThisQuestionNoNewLines, nnl)
+                   previousComment = nnl
+               end
             end
             local resultRofi, ret, errorStr = rofiLikeSelect(allCommentsForThisQuestionNoNewLines)
             if not ret then
