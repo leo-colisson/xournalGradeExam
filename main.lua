@@ -320,6 +320,10 @@ function sortTexts(a,b)
    end
 end
 
+function compareComments(x, y)
+    return (x[1] > y[1]) or (x[1] == y[1] and #x[2] < #y[2])
+end
+
 warningAboutOldVersionNotShown = true
 
 -- Try to fetch all texts only using the new lua API call. If this API is not available, return nil
@@ -1779,18 +1783,32 @@ function addComment()
             for _, x in ipairs(allCommentsForThisQuestion) do
                local nnl = trim(x:gsub("\n", " "))
                if previousComment == nil or nnl ~= previousComment then
-                   table.insert(allCommentsForThisQuestionNoNewLines, nnl)
+                   table.insert(allCommentsForThisQuestionNoNewLines, {1, nnl, x})
                    previousComment = nnl
+               else
+                   local n = #allCommentsForThisQuestionNoNewLines
+                   local nocc, nnl, wnl = table.unpack(allCommentsForThisQuestionNoNewLines[n])
+                   allCommentsForThisQuestionNoNewLines[n] = table.pack(nocc+1, nnl, wnl)
                end
             end
-            local resultRofi, ret, errorStr = rofiLikeSelect(allCommentsForThisQuestionNoNewLines)
+            table.sort(allCommentsForThisQuestionNoNewLines, compareComments)
+            local allCommentsSorted = {}
+            for _,x in ipairs(allCommentsForThisQuestionNoNewLines) do
+                table.insert(allCommentsSorted,x[2])
+            end
+            local resultRofi, ret, errorStr = rofiLikeSelect(allCommentsSorted)
             if not ret then
                app.openDialog("An error occured when adding comments (" .. errorStr .. ").  Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Otherwise, just add comments manually by adding an empty line and your comment after any grade.", {"Ok"}, nil)
             else
                -- TODO: detect that a text is already present and change directly the text accordingly
-               local i = index_in_array(allCommentsForThisQuestionNoNewLines, trim(resultRofi))
-               print(i, resultRofi, allCommentsForThisQuestion[i])
-               copyToClipboard(allCommentsForThisQuestion[i])
+               -- local i = index_in_array(allCommentsSorted, trim(resultRofi))
+               for i, x in ipairs(allCommentsForThisQuestionNoNewLines) do
+                   if x[2] == trim(resultRofi) then
+                      print(i, resultRofi, x[3])
+                      copyToClipboard(x[3])
+                      break
+                  end
+               end
             end
          end
       end
