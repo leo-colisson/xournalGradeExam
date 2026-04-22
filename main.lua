@@ -79,6 +79,10 @@ function trim(x)
    return x:match("^%s*(.-)%s*$")
 end
 
+function trimNewLines(x)
+   return x:match("^\n*(.-)\n*$")
+end
+
 function split(s, delimiter)
     result = {};
     delimiter_regexp = delimiter:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%0")
@@ -1476,12 +1480,12 @@ function rofiLikeSelect(listOfTexts)
    else
       execFile = io.popen("cat \"" .. file .. "\" | " .. cmd .. " 2> gradeExam.log", 'r')
    end
-   local resultRofi = trim(execFile:read('*a') or "")
+   local resultRofi = trimNewLines(execFile:read('*a') or "")
    local ret = execFile:close()
    f:close()
    os.remove(file)
    local errorHandle = io.open("gradeExam.log", "r")
-   local errorStr = trim(assert(errorHandle:read('*a')))
+   local errorStr = trimNewLines(assert(errorHandle:read('*a')))
    errorHandle:close()
    os.remove("gradeExam.log")
    return resultRofi, ret, errorStr
@@ -1781,7 +1785,7 @@ function addComment()
             local allCommentsForThisQuestionNoNewLines = {}
             local previousComment = nil
             for _, x in ipairs(allCommentsForThisQuestion) do
-               local nnl = trim(x:gsub("\n", " "))
+               local nnl = trimNewLines(x:gsub("\n", " "))
                if previousComment == nil or nnl ~= previousComment then
                    table.insert(allCommentsForThisQuestionNoNewLines, {1, nnl, x})
                    previousComment = nnl
@@ -1801,9 +1805,9 @@ function addComment()
                app.openDialog("An error occured when adding comments (" .. errorStr .. ").  Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Otherwise, just add comments manually by adding an empty line and your comment after any grade.", {"Ok"}, nil)
             else
                -- TODO: detect that a text is already present and change directly the text accordingly
-               -- local i = index_in_array(allCommentsSorted, trim(resultRofi))
+               -- local i = index_in_array(allCommentsSorted, trimNewLines(resultRofi))
                for i, x in ipairs(allCommentsForThisQuestionNoNewLines) do
-                   if x[2] == trim(resultRofi) then
+                   if x[2] == resultRofi then
                       print(i, resultRofi, x[3])
                       copyToClipboard(x[3])
                       break
