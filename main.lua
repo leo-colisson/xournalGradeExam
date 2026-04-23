@@ -259,6 +259,8 @@ function copyToClipboard(text)
    h:close()
 end
 
+
+
 gradeExamHistory = nil
 gradeExamHistoryPosition = 0 -- We consider an array modulo to efficiently keep only a few elements.
 gradeExamHistoryLength = 200
@@ -272,7 +274,7 @@ function recordPositionHistory()
    end
    gradeExamHistoryPosition = (gradeExamHistoryPosition + 1) % gradeExamHistoryLength
    gradeExamHistory[gradeExamHistoryPosition] = {
-      page = app.getDocumentStructure().currentPage
+      page = app.getDocumentStructure().currentPage,
    }
 end
 
@@ -1321,7 +1323,7 @@ function generateCSV(mode)
             end
          end
       end
-      if missing_grades_current_student ~= "" then
+      if missing_grades_current_student ~= "" and student ~= bareme then
          if studentWithExam[student] then
             missing_grades_message = missing_grades_message .. (missing_grades_message == "" and "" or ", ") .. student .. " (" .. missing_grades_current_student .. ")"
          else
@@ -1785,7 +1787,7 @@ function addComment()
             local allCommentsForThisQuestionNoNewLines = {}
             local previousComment = nil
             for _, x in ipairs(allCommentsForThisQuestion) do
-               local nnl = trimNewLines(x:gsub("\n", " "))
+               local nnl = trim(x:gsub("\n", " "))
                if previousComment == nil or nnl ~= previousComment then
                    table.insert(allCommentsForThisQuestionNoNewLines, {1, nnl, x})
                    previousComment = nnl
@@ -1805,9 +1807,9 @@ function addComment()
                app.openDialog("An error occured when adding comments (" .. errorStr .. ").  Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Otherwise, just add comments manually by adding an empty line and your comment after any grade.", {"Ok"}, nil)
             else
                -- TODO: detect that a text is already present and change directly the text accordingly
-               -- local i = index_in_array(allCommentsSorted, trimNewLines(resultRofi))
+               -- local i = index_in_array(allCommentsSorted, trim(resultRofi))
                for i, x in ipairs(allCommentsForThisQuestionNoNewLines) do
-                   if x[2] == resultRofi then
+                   if x[2] == trim(resultRofi) then
                       print(i, resultRofi, x[3])
                       copyToClipboard(x[3])
                       break
