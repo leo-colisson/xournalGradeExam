@@ -1257,6 +1257,7 @@ function generateCSV(mode)
    -- We show the grades for each student
    local missing_grades_message = ""
    local missing_all_grades_message = ""
+   local warning_cant_convert_to_grade = ""
    ymlFile:write("students:\n")
    for i=1,#studentArray do
       local student = studentArray[i]
@@ -1300,7 +1301,7 @@ function generateCSV(mode)
             else
                file:write(gr)
             end
-            if student ~= bareme then
+            if student ~= bareme and found_grade then
                ymlFile:write("        grade: " .. gr .. "\n")
             end
          elseif mode == percent_formula then
@@ -1310,7 +1311,17 @@ function generateCSV(mode)
                file:write("=" .. gr .. "*" .. int_to_spreadsheet_col(j + nb_cols) .. "2/100")
             end
             if student ~= bareme then
-               ymlFile:write("        grade_percent: " .. gr .. "\n")
+               if found_grade then
+                  ymlFile:write("        grade_percent: " .. gr .. "\n")
+                  local gr_nb = tonumber(gr)
+                  local bareme_nb = allGrades[bareme] ~= nil and allGrades[bareme][questionNamesArray[j]] ~= nil and tonumber(allGrades[bareme][questionNamesArray[j]]) or nil
+                  if gr_nb ~= nil and bareme_nb ~= nil then
+                     ymlFile:write("        grade: " .. (gr * bareme_nb / 100) .. "\n")
+                  else
+                     local bareme_str = allGrades[bareme] ~= nil and allGrades[bareme][questionNamesArray[j]] ~= nil and allGrades[bareme][questionNamesArray[j]] or "missing reference grade"
+                     warning_cant_convert_to_grade = warning_cant_convert_to_grade .. "; student " .. questionNamesArray[j] .. ", grade " .. gr .. " = " .. bareme_str
+                  end
+               end
             end
          end
          if student ~= bareme then
@@ -1331,6 +1342,9 @@ function generateCSV(mode)
          end
       end
       file:write('\n')
+   end
+   if warning_cant_convert_to_grade ~= "" then
+      table.insert(warning_messages, "WARNING: some grades in percentage could not be turned into grades in points: " .. warning_cant_convert_to_grade)
    end
    if missing_grades_message ~= "" then
       table.insert(warning_messages, "WARNING: the following students are missing grades for the following questions: " .. missing_grades_message)
