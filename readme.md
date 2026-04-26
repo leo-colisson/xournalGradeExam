@@ -61,7 +61,7 @@ We aim to later provide integrated solutions to directly do the following tasks 
 
 ### Automatically send emails
 
-This python script (adapt it to your need!) will send an email to all students with their exam attached. To use it, first export via this plugin in xournal the CSV/YAML file and the PDF files. Then copy/paste the below script in a `sendemail.py` file, edit all strings involving `REPLACE ME` in this file to provide proper SMTP configuration, path the YAML file exported during the previous step, and message to send to all users. Then, execute this python file by opening a console in this folder (see `cd`/`ls`) and type `python sendemail.py`. If the script encounters some errors, they will be summarized at the end. WE STRONGLY ADVISE YOU TO UNDERSTAND THIS SCRIPT AND TEST IT FIRST with a few dummy students/emails.
+This python script (adapt it to your need!) will send an email to all students with their exam attached. To use it, first add a new column at the end of the student names containing their emails (I just add them in my spreadsheet and copy/paste the spreadsheet in the reference list of students), then export via this plugin in xournal the CSV/YAML file and the PDF files. Then copy/paste the below script in a `sendemail.py` file, edit all strings involving `REPLACE ME` in this file to provide proper SMTP configuration, path the YAML file exported during the previous step, column containing the email, and message to send to all users. Then, execute this python file by opening a console in this folder (see `cd`/`ls`) and type `python sendemail.py`. If the script encounters some errors, they will be summarized at the end. WE STRONGLY ADVISE YOU TO UNDERSTAND THIS SCRIPT AND TEST IT FIRST with a few dummy students/emails or by commenting the line that sends the email to see if the emails are properly formatted.
 
 ```python
 import yaml
@@ -74,6 +74,8 @@ SMTP_EMAIL = "yourEmail"
 SMTP_PASSWORD = "yourPassword"
 # REPLACE ME with the path to the YAML file exported via this plugin in xournal++ 
 YAML_CONFIG = "yourExam_unbook_grades_with_comments.yml"
+# REPLACE ME with the ID of the column containing the email (1 = first column, 2 = second column…)
+EMAIL_COLUMN = 4
 
 import smtplib
 from pathlib import Path
@@ -136,7 +138,7 @@ with open(YAML_CONFIG, 'r') as stream:
         try:
             if student["exam_found"]:
                 print(f"=== Dealing with {student["name"]}")
-                email = student["name"].split("\t")[3]
+                email = re.split('\t|\\|', student["name"])[EMAIL_COLUMN - 1]
                 grade = sum([ q["grade"] for q in student["questions"]])
                 name = f'{student["name"].split("\t")[2]} {student["name"].split("\t")[1]}'
                 print("email: ", email)
