@@ -7,7 +7,7 @@ local SEP_NAME = "|"
 local GRADE_SEP = "~>"
 local CSV_SEP = "\t"
 local FOLDER_EXPORT = "pdf_exports"
-   
+
 -- Settings car be configured via a text like:
 -- *settings:
 -- optionA = foo
@@ -506,13 +506,15 @@ function getReferenceStudents(allTextsInPreamble)
    for _, currText in ipairs(allTextsInPreamble) do
       -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
       if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
+         local firstLine = 0
          for currLine in iterate_on_lines(currText.text) do
-            if currLine ~= PREFIX_REF_STUDENTS then
+            if firstLine > 0 then
                if referenceStudentsHash[currLine] == nil then
                   table.insert(referenceStudentsArray, currLine)
                   referenceStudentsHash[currLine] = true
                end
             end
+            firstLine = firstLine + 1
          end
       end
    end
@@ -1100,8 +1102,9 @@ function generateCSV(mode)
       end
       -- Try to check if it is the list of all students (=starts with PREFIX_REF_STUDENTS)
       if string.sub(currText.text,1,#PREFIX_REF_STUDENTS) == PREFIX_REF_STUDENTS then
+         local firstLine = 0
          for currLine in iterate_on_lines(currText.text) do
-            if currLine ~= PREFIX_REF_STUDENTS then
+            if firstLine > 0 then
                referenceStudentsHash[currLine] = true
                allGrades[currLine] = allGrades[currLine] or {}
                if studentHash[currLine] == nil then
@@ -1109,6 +1112,7 @@ function generateCSV(mode)
                   table.insert(studentArray,currLine)
                end
             end
+            firstLine = firstLine + 1
          end
       end 
       -- Check if this is a setting (=starts with PREFIX_SETTING)
@@ -1245,7 +1249,7 @@ function generateCSV(mode)
    for i=1,#questionNamesArray do
       file:write(CSV_SEP)
       file:write(questionNamesArray[i])
-      ymlFile:write("  - question: |\n")
+      ymlFile:write("  - question: |-\n")
       ymlFile:write("      " .. questionNamesArray[i] .. "\n")
       if baremeIsPresent then
          if allGrades[bareme][questionNamesArray[i]] ~= nil then
@@ -1262,8 +1266,11 @@ function generateCSV(mode)
    for i=1,#studentArray do
       local student = studentArray[i]
       if student ~= bareme then
-         ymlFile:write("  - name: |\n")
+         ymlFile:write("  - name: |-\n")
          ymlFile:write("      " .. student .. "\n")
+         ymlFile:write("    exam_found: " .. (studentWithExam[student] ~= nil and "true" or "false") .. "\n")
+         ymlFile:write("    pdf_file_name_export: |-\n")
+         ymlFile:write("      " .. sanitizeFilename(student) .. ".pdf\n")
          ymlFile:write("    questions:\n")
       end
       -- We cut student into multiple columns (ID, name…) if necessary
@@ -1292,7 +1299,7 @@ function generateCSV(mode)
          -- | allows us to avoid to quote anything. Simplest solution I think
          -- (also to copy/paste back in text files without parsers)!
          if student ~= bareme then
-            ymlFile:write("      - question: |\n")
+            ymlFile:write("      - question: |-\n")
             ymlFile:write("          ".. questionNamesArray[j] .. "\n")
          end
          if mode == 1 or i == 1 then -- For the bareme no need to write it this way
@@ -1328,7 +1335,7 @@ function generateCSV(mode)
             ymlFile:write("        comments:\n")
             if allComments[student] ~= nil and allComments[student][questionNamesArray[j]] ~= nil then
                for _, comment in ipairs(allComments[student][questionNamesArray[j]]) do
-                  ymlFile:write("          - |\n")
+                  ymlFile:write("          - |-\n")
                   ymlFile:write("            " .. comment .. "\n")
                end
             end
@@ -1436,6 +1443,11 @@ function exportPdf()
    end
    os.execute("mkdir " .. FOLDER_EXPORT)
    local allTexts = getAllTexts()
+   -- We add a dummy user at the end or the last user will not be exported properly
+   table.insert(allTexts, {
+      text = PREFIX_NAME .. " DUMMY USER";
+      page = #(app.getDocumentStructure().pages) + 1
+   })
    local allTextsInPreamble = extractTextsInPreamble(allTexts)
    local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
    local start = -1
@@ -1834,3 +1846,5 @@ function addComment()
       end
    end
 end
+
+

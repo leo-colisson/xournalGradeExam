@@ -55,6 +55,115 @@ To benefit the most from the plugin, we recommend the following workflow:
 13. **Import this CSV** in your favorite spreadsheet editor (Excel, Libre Office Calc…). At least in Libre Office Calc, **make sure to select the `English` locale** when importing the CSV (otherwise it might be confused by english-named formulas and by grades with dots like `2.5` if your default locale expects comma-separated numbers) and click on a field named like `Evaluate formulas` since in percentage mode we use a formula to allow you to later change the scale for each question in excel.
 14. You can also **export the document into many PDF** (one for each student with the corresponding exam) by clicking on `Plugins > GradeExam: export PDF` (it will create a new folder containing all PDF). This way you can send their file to each student to allow them to see comments on their exams. If you feel a bit more adventurous, you can also try to print the annotations back to the original exams by exporting the PDF without background (`File > Export as` will give you extra export options), but keep in mind that this may slightly shift the position of the annotations, and that you really need to check if pages are not skipped when printing or you may end up printing the annotations on the wrong exam…
 
+## Scripts
+
+We aim to later provide integrated solutions to directly do the following tasks inside xournal++, but we want to implement them cleanly using nice GUI (that will also be used to improve other functionalities) which involved non-trivial work first. Hence in the meantime, we provide python scripts to automatize some tasks.
+
+### Automatically send emails
+
+This python script (adapt it to your need!) will send an email to all students with their exam attached. To use it, first export via this plugin in xournal the CSV/YAML file and the PDF files. Then copy/paste the below script in a `sendemail.py` file, edit all strings involving `REPLACE ME` in this file to provide proper SMTP configuration, path the YAML file exported during the previous step, and message to send to all users. Then, execute this python file by opening a console in this folder (see `cd`/`ls`) and type `python sendemail.py`. If the script encounters some errors, they will be summarized at the end. WE STRONGLY ADVISE YOU TO UNDERSTAND THIS SCRIPT AND TEST IT FIRST with a few dummy students/emails.
+
+```python
+import yaml
+
+# REPLACE ME me with your email credentials:
+SMTP_SERVER = "your.school.smtp.server"
+SMTP_PORT = "587"
+SMTP_USER = "yourSmtpUser"
+SMTP_EMAIL = "yourEmail"
+SMTP_PASSWORD = "yourPassword"
+# REPLACE ME with the path to the YAML file exported via this plugin in xournal++ 
+YAML_CONFIG = "yourExam_unbook_grades_with_comments.yml"
+
+import smtplib
+from pathlib import Path
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email.utils import COMMASPACE, formatdate
+from email import encoders
+import traceback
+import logging
+
+# https://stackoverflow.com/a/16509278
+def send_mail(send_to, subject, message,
+              files=[], send_from=SMTP_EMAIL, server=SMTP_SERVER,
+              port=SMTP_PORT, username=SMTP_USER, password=SMTP_PASSWORD,
+              use_tls=True):
+    """Compose and send email with provided info and attachments.
+
+    Args:
+        send_from (str): from name
+        send_to (list[str]): to name(s)
+        subject (str): message title
+        message (str): message body
+        files (list[str]): list of file paths to be attached to email
+        server (str): mail server host name
+        port (int): port number
+        username (str): server auth username
+        password (str): server auth password
+        use_tls (bool): use TLS mode
+    """
+    msg = MIMEMultipart()
+    msg['From'] = send_from
+    msg['To'] = COMMASPACE.join(send_to)
+    msg['Date'] = formatdate(localtime=True)
+    msg['Subject'] = subject
+
+    msg.attach(MIMEText(message))
+
+    for path in files:
+        part = MIMEBase('application', "octet-stream")
+        with open(path, 'rb') as file:
+            part.set_payload(file.read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition',
+                        'attachment; filename={}'.format(Path(path).name))
+        msg.attach(part)
+
+    smtp = smtplib.SMTP(server, port)
+    if use_tls:
+        smtp.starttls()
+    smtp.login(username, password)
+    smtp.sendmail(send_from, send_to, msg.as_string())
+    smtp.quit()
+
+# Read YAML file
+errors = []
+with open(YAML_CONFIG, 'r') as stream:
+    data_loaded = yaml.safe_load(stream)
+    for student in data_loaded["students"]:
+        try:
+            if student["exam_found"]:
+                print(f"=== Dealing with {student["name"]}")
+                email = student["name"].split("\t")[3]
+                grade = sum([ q["grade"] for q in student["questions"]])
+                name = f'{student["name"].split("\t")[2]} {student["name"].split("\t")[1]}'
+                print("email: ", email)
+                print(f"grade: {grade:.2f}")
+                # REPLACE ME with any text of your choice
+                email_text = f'''
+Dear {name},
+
+Please find attached your corrected exam. Your final grade is {grade} / 20.
+            
+Best regards,
+Your teacher
+            '''
+                print(email_text)
+                send_mail(email, "Introduction to cryptography: midterm", email_text, files=[f'pdf_exports/{student["pdf_file_name_export"]}'])
+                print("Email sent!")
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            errors += [ f'{student["name"]}: ' + str(e)]
+
+if errors:
+    print("We found the following errors:")
+    for e in errors:
+        print(e)
+
+```
+
 ## TODOs and known issues
 
 This plugin is already fairly usable but still under development: it has notably been poorly tested (especially on Windows & MacOS), so please report in the [Github issue tracker](https://github.com/leo-colisson/xournalGradeExam/issues) any bug you may encounter. We also have a list of remaining TODO to implement, if you are interested in one feature (listed here or not), feel free to drop a message in the above bug report to motivate me to code it quickly:
@@ -62,7 +171,7 @@ This plugin is already fairly usable but still under development: it has notably
 - Automatically add the next grade when clicking or drawing in the margin instead of populating the clipboard. First, we need to implement in Xournal++ a way too add hooks to detect clicks, see [this discussion](https://github.com/xournalpp/xournalpp/discussions/7067). 
 - Better documentation & vidéos
 - The menu is a bit cluttered with many not-so-useful entries. Try to hide them in a submenu [if we find a way to do that with Xournal++](https://github.com/xournalpp/xournalpp/discussions/7119).
-- Provide methods to automatically send emails with exams to each student, or to synchronize it automatically with Moodle, or to encrypt with a password so that all exams can be put on an arbitrary server.
+- Provide integrated methods to automatically send emails with exams to each student, or to synchronize it automatically with Moodle, or to encrypt with a password so that all exams can be put on an arbitrary server.
 
 
 ## Related tools
