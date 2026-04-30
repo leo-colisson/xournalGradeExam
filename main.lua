@@ -204,15 +204,16 @@ end
 -- https://github.com/xournalpp/xournalpp/issues/7120
 -- So let's implement my version
 function scrollTo(page, x, y)
-   local zoom = app.getZoom()
-   app.setCurrentPage(page)
-   app.scrollToPage(page)
-   app.scrollToPos(x*zoom, y*zoom)
+  local zoom = app.getZoom()
+  app.setCurrentPage(page)
+  app.scrollToPage(page)
+  app.scrollToPos(x*zoom, y*zoom)
 end
 
 -- Register all Toolbar actions and intialize all UI stuff
 function initUi()
-  app.registerUi({["menu"] = "GradeExam: unbook A3 to A4", ["callback"] = "unbookPDF"});
+  app.registerUi({["menu"] = "GradeExam: unbook A3 to A4 (landscape)", ["callback"] = "unbookPDF", mode = 1});
+  app.registerUi({["menu"] = "GradeExam: unbook A3 to A4 (portrait)", ["callback"] = "unbookPDF", mode = 2});
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in portrait)", ["callback"] = "mergePDF", mode = 1});
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in landscape)", ["callback"] = "mergePDF", mode = 2});
   app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
@@ -1594,10 +1595,12 @@ function runPythonScript(script, args, dont_escape)
    return ret, stderr_and_out
 end 
 
--- Split a a3 book into a4 pages
-function unbookPDF()
+-- Split a a3 book into a4 pages (paysage)
+function unbookPDF(mode)
+   local portrait = mode == 2
    local script = [[
 #!/usr/bin/env python3
+import argparse
 from pypdf import PdfReader, PdfWriter, Transformation
 import sys
 import os
@@ -1625,13 +1628,17 @@ def split_page(page):
     return halves
 
 
-def unbook(input_pdf, output_pdf):
+def unbook(input_pdf, output_pdf, portrait=False):
     reader = PdfReader(input_pdf)
     writer = PdfWriter()
 
     pages = []
 
+    even = False
     for page in reader.pages:
+        if portrait:
+            page.rotation = (page.rotation + (-90 if even else 90)) % 360
+            even = not even
         if page.rotation != 0:
             page.transfer_rotation_to_content()
         halves = split_page(page)
@@ -1651,22 +1658,27 @@ def unbook(input_pdf, output_pdf):
 
 
 def main():
-    if len(sys.argv) == 2:
-        output_pdf = os.path.splitext(sys.argv[1])[0] + "_unbook.pdf"
-        unbook(sys.argv[1], output_pdf)
-        print("Generated pdf:", output_pdf)
-    elif len(sys.argv) == 3:
-        unbook(sys.argv[1], sys.argv[2])
-        print("Generated pdf:", sys.argv[2])
-    else:
-        print("Usage: python3 unbook.py INPUT_PDF [OUTPUT_PDF]")
-
+    parser = argparse.ArgumentParser(
+                    prog='Unbook',
+                    description='Unbook an A3 booklet into A4')
+    parser.add_argument('--portrait', action='store_true')
+    parser.add_argument('INPUT_PDF')
+    parser.add_argument('OUTPUT_PDF', nargs='?', default=None)
+    args = parser.parse_args()
+    if args.OUTPUT_PDF == None:
+        args.OUTPUT_PDF = os.path.splitext(args.INPUT_PDF)[0] + "_unbook.pdf"
+    unbook(args.INPUT_PDF, args.OUTPUT_PDF, portrait=args.portrait)
+    print("Generated pdf:", args.OUTPUT_PDF)
 
 if __name__ == "__main__":
     main()
-]]
+   ]]
    local pdfBackgroundFilename = app.getDocumentStructure().pdfBackgroundFilename
-   local ret, msg = runPythonScript(script, {pdfBackgroundFilename})
+   local args = {pdfBackgroundFilename}
+   if portrait then
+      table.insert(args, "--portrait")
+   end 
+   local ret, msg = runPythonScript(script, args)
    if not ret then
       msg = "It seems like an error occurred, this command requires python hence make sure to install python and the pypdf python library by typing 'python3 -m pip install pypdf' in a terminal (cmd on Windows). Error details:\n\n" .. msg
    end
