@@ -1523,7 +1523,8 @@ end
 -- Set the student of the current page based on the reference file
 function createStudent()
    recordPositionHistory()
-   local allTextsInPreamble = extractTextsInPreamble()
+   local allTexts = getAllTexts()
+   local allTextsInPreamble = extractTextsInPreamble(allTexts)
    local referenceStudentsHash, referenceStudentsArray = getReferenceStudents(allTextsInPreamble)
    if next(referenceStudentsArray) == nil then
       local msg = "Error: This function helps to add students when an already existing 'reference' list of students is provided (e.g. via a spreadsheet that you need to fill, it helps to quickly type student names, avoid typo, and to sort students correctly when exporting). So far **we found no such reference list**. So two options:\n\n 1. If you have no such list (or if you will get it only later), simply create on the first page of each student a new text area containing *:student|name where | (you can also use TAB instead of |) separates the various columns to export, like student number ID|first name|last name. These columns will also help to match the student with a reference template if you add one later, by trying to check for each column of the name you typed if there exists a unique student with this text in the reference list.\n\n2. Or you already have a reference list of students, so you can create the reference list yourself: create a new text area in an empty page at the beginning of the document (just create a new empty page if none is present), write *students: on the first line, and on the next lines just copy/paste the list of names from your template spreadsheet (i.e. one name per line, columns separated by TABS or |) into a text area. Then try again to call this function!"
@@ -1531,6 +1532,17 @@ function createStudent()
       app.openDialog(msg, {"OK"}, nil) -- This is not blocking, use callbacks otherwise
       return
    end
+   -- remove already assigned students from rofi
+   for _,currText in ipairs(allTexts) do
+      local maybeName = isStudentName(currText.text)
+      if maybeName ~= nil then
+          local i = index_in_array(referenceStudentsArray, maybeName)
+          if i ~= nil then
+              table.remove(referenceStudentsArray, i)
+          end
+      end
+   end
+   --
    local selectedStudent, ret, errorStr = rofiLikeSelect(referenceStudentsArray)
    if referenceStudentsHash[selectedStudent] == nil then
       local msg = "An error occurred '" .. errorStr .. "' while trying to get the student. Make sure that you have rofi installed (linux), choose (MacOS https://github.com/chipsenkbeil/choose) or to add wlines.exe (windows, https://github.com/JerwuQu/wlines) in your PATH. Alternatively, you can specify a different program by setting the GRADEEXAM_LIST_CMD environment variable, or you can also simply add a text field *:student|name (adding multiple columns, e.g. for ID, first name, last name… via TAB or |) at the beginning of each student exam. These columns are needed to match with the reference list when exporting: we will automatically try to guess the proper name of the student by trying to search if a unique student matches this text in the reference list."
