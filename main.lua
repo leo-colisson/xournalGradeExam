@@ -212,27 +212,27 @@ end
 
 -- Register all Toolbar actions and intialize all UI stuff
 function initUi()
-  app.registerUi({["menu"] = "GradeExam: unbook A3 to A4 (landscape)", ["callback"] = "unbookPDF", mode = 1});
-  app.registerUi({["menu"] = "GradeExam: unbook A3 to A4 (portrait)", ["callback"] = "unbookPDF", mode = 2});
-  app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in portrait)", ["callback"] = "mergePDF", mode = 1});
-  app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (images in landscape)", ["callback"] = "mergePDF", mode = 2});
-  app.registerUi({["menu"] = "GradeExam: merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
-  app.registerUi({["menu"] = "GradeExam: add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
-  app.registerUi({["menu"] = "GradeExam: 1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
-  app.registerUi({["menu"] = "GradeExam: go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
-  app.registerUi({["menu"] = "GradeExam: copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
-  app.registerUi({["menu"] = "GradeExam: put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
-  app.registerUi({["menu"] = "GradeExam: export CSV and YAML", ["callback"] = "generateCSV", mode = 1});
-  app.registerUi({["menu"] = "GradeExam: export CSV (percent formula) and YAML", ["callback"] = "generateCSV", mode = 2});
-  app.registerUi({["menu"] = "GradeExam: export pdf", ["callback"] = "exportPdf"});
+  app.registerUi({["menu"] = "Unbook A3 to A4 (landscape)", ["callback"] = "unbookPDF", mode = 1});
+  app.registerUi({["menu"] = "Unbook A3 to A4 (portrait)", ["callback"] = "unbookPDF", mode = 2});
+  app.registerUi({["menu"] = "Merge all PDF/images in current folder (images in portrait)", ["callback"] = "mergePDF", mode = 1});
+  app.registerUi({["menu"] = "Merge all PDF/images in current folder (images in landscape)", ["callback"] = "mergePDF", mode = 2});
+  app.registerUi({["menu"] = "Merge all PDF/images in current folder (exif rotated images)", ["callback"] = "mergePDF", mode = 3});
+  app.registerUi({["menu"] = "Add student", ["callback"] = "createStudent", ["accelerator"] = "F2"});
+  app.registerUi({["menu"] = "1st uncorrected grade all doc & save", ["callback"] = "gotoSmallestUncorrectedGradeAndSave", ["accelerator"] = "F4"});
+  app.registerUi({["menu"] = "Go to previously visited student", ["callback"] = "goBackHistory", ["accelerator"] = "F1"});
+  app.registerUi({["menu"] = "Copy comment to clipboard", ["callback"] = "addComment", ["accelerator"] = "F7"});
+  app.registerUi({["menu"] = "Put to clipboard all remaining grades to zero", ["callback"] = "allRemainingGradesToZeroInClipboard"});
+  app.registerUi({["menu"] = "Export CSV and YAML", ["callback"] = "generateCSV", mode = 1});
+  app.registerUi({["menu"] = "Export CSV (percent formula) and YAML", ["callback"] = "generateCSV", mode = 2});
+  app.registerUi({["menu"] = "Export pdf", ["callback"] = "exportPdf"});
 
-  app.registerUi({["menu"] = "GradeExam/Advanced: next student", ["callback"] = "gotoNextStudent"});
-  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade current student", ["callback"] = "gotoLastGrade"});
-  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade next student", ["callback"] = "gotoLastGradeNextStudent"});
-  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade next student & save", ["callback"] = "gotoLastGradeNextStudentAndSave"});
-  app.registerUi({["menu"] = "GradeExam/Advanced: 1st uncorrected grade all doc", ["callback"] = "gotoSmallestUncorrectedGrade"});
-  app.registerUi({["menu"] = "GradeExam/Advanced: debug", ["callback"] = "debug"});
-  app.registerUi({["menu"] = "GradeExam/Advanced: toggle put grade in clipboard", ["callback"] = "togglePutGradeInClipboard"});
+  app.registerUi({["menu"] = "Advanced: next student", ["callback"] = "gotoNextStudent"});
+  app.registerUi({["menu"] = "Advanced: 1st uncorrected grade current student", ["callback"] = "gotoLastGrade"});
+  app.registerUi({["menu"] = "Advanced: 1st uncorrected grade next student", ["callback"] = "gotoLastGradeNextStudent"});
+  app.registerUi({["menu"] = "Advanced: 1st uncorrected grade next student & save", ["callback"] = "gotoLastGradeNextStudentAndSave"});
+  app.registerUi({["menu"] = "Advanced: 1st uncorrected grade all doc", ["callback"] = "gotoSmallestUncorrectedGrade"});
+  app.registerUi({["menu"] = "Advanced: debug", ["callback"] = "debug"});
+  app.registerUi({["menu"] = "Advanced: toggle put grade in clipboard", ["callback"] = "togglePutGradeInClipboard"});
   -- F1 will be used to go backward, F3 will be used to add grades
 end
 
